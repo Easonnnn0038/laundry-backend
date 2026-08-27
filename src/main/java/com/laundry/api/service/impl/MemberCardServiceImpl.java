@@ -13,6 +13,7 @@ import com.laundry.api.mapper.CustomerMapper;
 import com.laundry.api.mapper.MemberCardMapper;
 import com.laundry.api.mapper.MemberCardRechargeMapper;
 import com.laundry.api.mapper.MemberCardTypeMapper;
+import com.laundry.api.mapper.SeqCounterMapper;
 import com.laundry.api.service.MemberCardService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
 public class MemberCardServiceImpl implements MemberCardService {
 
     private static final Logger log = LoggerFactory.getLogger(MemberCardServiceImpl.class);
+    private static final int MAX_RETRY = 3;
 
     @Autowired
     private MemberCardTypeMapper cardTypeMapper;
@@ -46,6 +48,9 @@ public class MemberCardServiceImpl implements MemberCardService {
 
     @Autowired
     private CustomerMapper customerMapper;
+
+    @Autowired
+    private SeqCounterMapper seqCounterMapper;
 
     @Override
     public List<MemberCardTypeResponse> listCardTypes() {
@@ -119,14 +124,12 @@ public class MemberCardServiceImpl implements MemberCardService {
             throw new RuntimeException("会员卡类型不存在或已停用");
         }
 
-        // 4. 生成会员卡号：MC + 日期(YYYYMMDD8位) + 流水3位
+        // 4. 生成会员卡号：MC + 日期(YYYYMMDD8位) + 流水3位（原子计数器，防并发冲突）
         String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String prefix = "MC" + today;
-        LambdaQueryWrapper<MemberCard> countQw = new LambdaQueryWrapper<>();
-        countQw.likeRight(MemberCard::getCardNo, prefix);
-        Long count = cardMapper.selectCount(countQw);
-        int seq = count.intValue() + 1;
-        String cardNo = prefix + String.format("%03d", seq);
+        String cardCounterKey = "CARD:" + today;
+        seqCounterMapper.incrementSeq(cardCounterKey);
+        int seq = seqCounterMapper.getSeq(cardCounterKey);
+        String cardNo = "MC" + today + String.format("%03d", seq);
 
         // 5. 写入会员卡
         BigDecimal rechargeAmount = cardType.getAmount(); // 办卡金额 = 卡类型 amount
@@ -191,14 +194,27 @@ public class MemberCardServiceImpl implements MemberCardService {
             throw new RuntimeException("请输入或选择充值金额");
         }
 
-        BigDecimal before = card.getBalance();
-        BigDecimal after = before.add(amount);
-
-        // 更新卡余额
-        card.setBalance(after);
-        card.setTotalRecharge(card.getTotalRecharge().add(amount));
-        card.setUpdateTime(LocalDateTime.now());
-        cardMapper.updateById(card);
+        BigDecimal before = null;
+        BigDecimal after = null;
+        boolean updated = false;
+        for (int retry = 0; retry < MAX_RETRY; retry++) {
+            MemberCard freshCard = cardMapper.selectById(request.getCardId());
+            before = freshCard.getBalance();
+            after = before.add(amount);
+            freshCard.setBalance(after);
+            freshCard.setTotalRecharge(freshCard.getTotalRecharge().add(amount));
+            freshCard.setUpdateTime(LocalDateTime.now());
+            int rows = cardMapper.updateById(freshCard);
+            if (rows > 0) {
+                card = freshCard;
+                updated = true;
+                break;
+            }
+            log.warn("会员卡充值版本冲突，重试 {}/{}", retry + 1, MAX_RETRY);
+        }
+        if (!updated) {
+            throw new RuntimeException("会员卡充值失败：并发冲突，请重试");
+        }
 
         // 写充值记录
         MemberCardRecharge rc = new MemberCardRecharge();

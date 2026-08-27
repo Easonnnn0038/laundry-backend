@@ -52,6 +52,7 @@ public class OrderServiceImpl implements OrderService {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter MMDD_FMT = DateTimeFormatter.ofPattern("MMdd");
     private static final BigDecimal BD_10 = new BigDecimal("10");
+    private static final int MAX_RETRY = 3;
 
     @Autowired private LaundryOrderMapper orderMapper;
     @Autowired private OrderItemMapper orderItemMapper;
@@ -64,6 +65,7 @@ public class OrderServiceImpl implements OrderService {
     @Autowired private SmsLogMapper smsLogMapper;
     @Autowired private OrderOperateLogMapper operateLogMapper;
     @Autowired private StoreMapper storeMapper;
+    @Autowired private SeqCounterMapper seqCounterMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -142,14 +144,27 @@ public class OrderServiceImpl implements OrderService {
             rechargeAmount = rct.getAmount();
             rechargeBalanceBefore = memberCard.getBalance();
             BigDecimal rechargeBalanceAfter = rechargeBalanceBefore.add(rechargeAmount);
-            // 更新内存余额（供后续 Step4 卡扣计算使用）
-            memberCard.setBalance(rechargeBalanceAfter);
-            // 更新DB余额（事务内，订单创建失败会回滚）
-            MemberCard cardToUpdate = cardMapper.selectById(memberCard.getId());
-            cardToUpdate.setBalance(rechargeBalanceAfter);
-            cardToUpdate.setTotalRecharge(cardToUpdate.getTotalRecharge().add(rechargeAmount));
-            cardToUpdate.setUpdateTime(now);
-            cardMapper.updateById(cardToUpdate);
+            // 乐观锁重试：并发充值/扣款时防止余额丢失更新
+            boolean rechargeUpdated = false;
+            for (int retry = 0; retry < MAX_RETRY; retry++) {
+                MemberCard cardToUpdate = cardMapper.selectById(memberCard.getId());
+                BigDecimal currentBalance = cardToUpdate.getBalance();
+                BigDecimal newBalance = currentBalance.add(rechargeAmount);
+                cardToUpdate.setBalance(newBalance);
+                cardToUpdate.setTotalRecharge(cardToUpdate.getTotalRecharge().add(rechargeAmount));
+                cardToUpdate.setUpdateTime(now);
+                int rows = cardMapper.updateById(cardToUpdate);
+                if (rows > 0) {
+                    rechargeBalanceAfter = newBalance;
+                    memberCard.setBalance(newBalance);
+                    rechargeUpdated = true;
+                    break;
+                }
+                log.warn("会员卡充值版本冲突，重试 {}/{}", retry + 1, MAX_RETRY);
+            }
+            if (!rechargeUpdated) {
+                throw new RuntimeException("会员卡充值失败：并发冲突，请重试");
+            }
             log.info("收衣同时充值 cardNo={}, 充值={}, 充后余额={}", memberCard.getCardNo(),
                     rechargeAmount, rechargeBalanceAfter);
         }
@@ -224,9 +239,10 @@ public class OrderServiceImpl implements OrderService {
             extraMethod = null;
         }
 
-        // ========== Step 5: 生成订单号 ==========
-        int todayCount = getTodayOrderCount(today, storeCode);
-        int orderSeq = todayCount + 1;
+        // ========== Step 5: 生成订单号（原子计数器，防并发冲突）==========
+        String orderCounterKey = "ORDER:" + storeCode + ":" + today;
+        seqCounterMapper.incrementSeq(orderCounterKey);
+        int orderSeq = seqCounterMapper.getSeq(orderCounterKey);
         String orderNo = storeCode + today + String.format("%03d", orderSeq); // 14位
 
         // ========== Step 6: 写 laundry_order ==========
@@ -352,16 +368,30 @@ public class OrderServiceImpl implements OrderService {
         // ========== Step 8: 扣会员卡余额（cardDeduct>0时）==========
         BigDecimal cardBalanceAfter = memberCard != null ? memberCard.getBalance() : null;
         if (cardDeduct.compareTo(BigDecimal.ZERO) > 0) {
-            MemberCard updatedCard = cardMapper.selectById(memberCard.getId());
-            BigDecimal before = updatedCard.getBalance();
-            BigDecimal after = before.subtract(cardDeduct);
-            if (after.compareTo(BigDecimal.ZERO) < 0) throw new RuntimeException("会员卡余额不足");
+            BigDecimal before = null;
+            BigDecimal after = null;
+            MemberCard updatedCard = null;
+            boolean deductUpdated = false;
+            for (int retry = 0; retry < MAX_RETRY; retry++) {
+                updatedCard = cardMapper.selectById(memberCard.getId());
+                before = updatedCard.getBalance();
+                after = before.subtract(cardDeduct);
+                if (after.compareTo(BigDecimal.ZERO) < 0) throw new RuntimeException("会员卡余额不足");
 
-            updatedCard.setBalance(after);
-            updatedCard.setTotalConsume(updatedCard.getTotalConsume().add(cardDeduct));
-            updatedCard.setUpdateTime(now);
-            cardMapper.updateById(updatedCard);
-            cardBalanceAfter = after;
+                updatedCard.setBalance(after);
+                updatedCard.setTotalConsume(updatedCard.getTotalConsume().add(cardDeduct));
+                updatedCard.setUpdateTime(now);
+                int rows = cardMapper.updateById(updatedCard);
+                if (rows > 0) {
+                    cardBalanceAfter = after;
+                    deductUpdated = true;
+                    break;
+                }
+                log.warn("会员卡扣款版本冲突，重试 {}/{}", retry + 1, MAX_RETRY);
+            }
+            if (!deductUpdated) {
+                throw new RuntimeException("会员卡扣款失败：并发冲突，请重试");
+            }
 
             // 写消费记录
             MemberCardConsume consume = new MemberCardConsume();
@@ -579,13 +609,12 @@ public class OrderServiceImpl implements OrderService {
         MemberCardType cardType = cardTypeMapper.selectById(cardTypeId);
         if (cardType == null || cardType.getStatus() != 1) throw new RuntimeException("会员卡类型不存在");
 
-        // 卡号
+        // 卡号（原子计数器，防并发冲突）
         String today = DATE_FMT.format(LocalDate.now());
-        String prefix = "MC" + today;
-        LambdaQueryWrapper<MemberCard> countQw = new LambdaQueryWrapper<>();
-        countQw.likeRight(MemberCard::getCardNo, prefix);
-        Long count = cardMapper.selectCount(countQw);
-        String cardNo = prefix + String.format("%03d", count.intValue() + 1);
+        String cardCounterKey = "CARD:" + today;
+        seqCounterMapper.incrementSeq(cardCounterKey);
+        int cardSeq = seqCounterMapper.getSeq(cardCounterKey);
+        String cardNo = "MC" + today + String.format("%03d", cardSeq);
 
         MemberCard card = new MemberCard();
         card.setCardNo(cardNo);
