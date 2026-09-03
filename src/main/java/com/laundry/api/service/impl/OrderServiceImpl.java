@@ -9,6 +9,8 @@ import com.laundry.api.dto.response.*;
 import com.laundry.api.entity.*;
 import com.laundry.api.mapper.*;
 import com.laundry.api.service.OrderService;
+import com.laundry.api.mq.PrintTaskMessage;
+import com.laundry.api.mq.PrintTaskProducer;
 import com.laundry.api.utils.BarcodeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +68,7 @@ public class OrderServiceImpl implements OrderService {
     @Autowired private OrderOperateLogMapper operateLogMapper;
     @Autowired private StoreMapper storeMapper;
     @Autowired private SeqCounterMapper seqCounterMapper;
+    @Autowired private PrintTaskProducer printTaskProducer;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -544,6 +547,33 @@ public class OrderServiceImpl implements OrderService {
 
         log.info("收衣完成 orderNo={}, totalCount={}, totalReceivable={}",
                 orderNo, totalCount, totalReceivable);
+
+        // ========== Step 14: 异步发送标签打印任务（RabbitMQ）==========
+        try {
+            PrintTaskMessage printTask = new PrintTaskMessage();
+            printTask.setOrderNo(orderNo);
+            printTask.setCustomerName(customer.getName());
+            printTask.setCustomerPhone(customer.getPhone());
+            printTask.setStoreCode(storeCode);
+            printTask.setStoreName(resp.getStoreName() != null ? resp.getStoreName() : "小木棒洗衣");
+            printTask.setCreateTime(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+
+            List<PrintTaskMessage.ItemPrintInfo> printItems = new ArrayList<>();
+            for (ReceiveOrderItemResponse ir : itemResps) {
+                PrintTaskMessage.ItemPrintInfo pi = new PrintTaskMessage.ItemPrintInfo();
+                pi.setBarcode(ir.getBarcode());
+                pi.setCategoryName(ir.getCategoryName());
+                pi.setQuantity(ir.getQuantity());
+                pi.setColor(ir.getColor());
+                printItems.add(pi);
+            }
+            printTask.setItems(printItems);
+
+            printTaskProducer.sendPrintTask(printTask);
+        } catch (Exception e) {
+            log.warn("标签打印任务发送失败，不影响主流程 orderNo={}", orderNo, e);
+        }
+
         return resp;
     }
 
