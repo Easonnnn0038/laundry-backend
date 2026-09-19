@@ -134,6 +134,9 @@ public class LaundryOrder {
     /** 取衣闭单时间 */
     private LocalDateTime pickupTime;
 
+    /** 整单回店后生成的四位取衣码 */
+    private String pickupCode;
+
     /** 取衣操作人 */
     private String pickupOperator;
 

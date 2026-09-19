@@ -11,7 +11,10 @@ import java.util.Map;
 @Service
 public class StoreReturnService {
     private final JdbcTemplate jdbc;
-    public StoreReturnService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    private final PickupCodeService pickupCodeService;
+    public StoreReturnService(JdbcTemplate jdbc, PickupCodeService pickupCodeService) {
+        this.jdbc = jdbc; this.pickupCodeService = pickupCodeService;
+    }
 
     public List<Map<String, Object>> batches(String storeCode) {
         return jdbc.queryForList("""
@@ -130,6 +133,7 @@ public class StoreReturnService {
                 SELECT COUNT(*) FROM factory_package WHERE order_id=? AND status<>'BACK_TO_STORE'
                 """, Integer.class, orderId);
         if (pending != null && pending == 0) {
+            pickupCodeService.ensureCode(orderId);
             int changed = jdbc.update("UPDATE laundry_order SET status='BACK_TO_STORE', update_time=? WHERE id=? AND status='SENT_TO_FACTORY'",
                     now, orderId);
             if (changed != 1) throw new IllegalArgumentException("订单状态已变化，请刷新后重新核对");
