@@ -21,7 +21,7 @@ public class ReceiveOrderItemResponse {
     @Schema(description = "12位衣物条码数字")
     private String barcode;
 
-    @Schema(description = "Code128条码图片（Base64 PNG），用于打印预览")
+    @Schema(description = "Code128条码图片（data URI；标签使用矢量 SVG），用于打印预览")
     private String barcodeImageBase64;
 
     @Schema(description = "类别名称")

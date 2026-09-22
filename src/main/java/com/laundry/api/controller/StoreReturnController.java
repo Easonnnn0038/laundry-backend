@@ -51,6 +51,8 @@ public class StoreReturnController {
 
     @PostMapping("/batches/{batchId}/exception")
     public Result<Map<String, Object>> reportException(@PathVariable long batchId, @Valid @RequestBody ExceptionRequest request) {
+        if (!"ADMIN".equals(currentUser.getUser().getRole()))
+            throw new org.springframework.security.access.AccessDeniedException("仅管理员可处理错误回店");
         return Result.success(service.reportException(batchId, request.packageNo(), request.reason(),
                 currentUser.getStoreCode(), currentUser.getOperatorId()));
     }

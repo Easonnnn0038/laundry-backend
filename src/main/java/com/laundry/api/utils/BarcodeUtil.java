@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 条码生成工具类
@@ -73,5 +74,37 @@ public class BarcodeUtil {
      */
     public static String generateCode128DataUri(String code, int width, int height) {
         return "data:image/png;base64," + generateCode128Base64(code, width, height);
+    }
+
+    /**
+     * 标签打印使用矢量 SVG，避免低分辨率 PNG 旋转与缩放后条纹发糊。
+     * 只画黑色条纹，白色区域（含静区）由 SVG 背景保留。
+     */
+    public static String generateCode128SvgDataUri(String code) {
+        try {
+            Map<EncodeHintType, Object> hints = new HashMap<>();
+            hints.put(EncodeHintType.MARGIN, 10);
+            BitMatrix matrix = new Code128Writer().encode(code, BarcodeFormat.CODE_128, 900, 100, hints);
+            StringBuilder svg = new StringBuilder(4096);
+            svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ")
+                    .append(matrix.getWidth()).append(' ').append(matrix.getHeight())
+                    .append("\" preserveAspectRatio=\"none\" shape-rendering=\"crispEdges\">")
+                    .append("<rect width=\"100%\" height=\"100%\" fill=\"white\"/>");
+            int x = 0;
+            while (x < matrix.getWidth()) {
+                if (!matrix.get(x, 0)) { x++; continue; }
+                int start = x;
+                while (x < matrix.getWidth() && matrix.get(x, 0)) x++;
+                svg.append("<rect x=\"").append(start).append("\" y=\"0\" width=\"")
+                        .append(x - start).append("\" height=\"").append(matrix.getHeight())
+                        .append("\" fill=\"black\"/>");
+            }
+            svg.append("</svg>");
+            return "data:image/svg+xml;base64," + Base64.getEncoder().encodeToString(
+                    svg.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            log.error("生成矢量条码失败 code={}", code, e);
+            throw new IllegalArgumentException("生成矢量条码失败", e);
+        }
     }
 }

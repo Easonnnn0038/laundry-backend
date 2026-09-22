@@ -46,6 +46,10 @@ photo:
   upload-dir: ./uploads/photos
   url-prefix: /photos
 
+maintenance:
+  factory-host: ${FACTORY_HOST:127.0.0.1}
+  factory-port: ${FACTORY_PORT:8081}
+
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.laundry.api.entity

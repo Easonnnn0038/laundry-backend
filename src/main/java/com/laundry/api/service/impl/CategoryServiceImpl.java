@@ -53,22 +53,6 @@ public class CategoryServiceImpl implements CategoryService {
     }
 
     @Override
-    public Map<String, List<CategoryResponse>> listGrouped() {
-        List<CategoryResponse> all = listAll();
-        // 保持GROUP_LABEL_MAP的顺序
-        Map<String, List<CategoryResponse>> result = new LinkedHashMap<>();
-        for (String key : GROUP_LABEL_MAP.keySet()) {
-            result.put(key, new ArrayList<>());
-        }
-        for (CategoryResponse r : all) {
-            result.computeIfAbsent(r.getCategoryGroup(), k -> new ArrayList<>()).add(r);
-        }
-        // 去掉空列表（如果有）
-        result.entrySet().removeIf(e -> e.getValue().isEmpty());
-        return result;
-    }
-
-    @Override
     public List<CategoryResponse> search(String keyword) {
         if (!StringUtils.hasText(keyword)) {
             return listAll();

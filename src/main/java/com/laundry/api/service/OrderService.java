@@ -37,15 +37,6 @@ public interface OrderService {
                                       Long operatorId, String operatorName);
 
     /**
-     * 获取今日收衣单数（订单号流水号生成用）
-     *
-     * @param today     日期 20260812
-     * @param storeCode 门店编号
-     * @return 今日已有的订单数
-     */
-    Integer getTodayOrderCount(String today, String storeCode);
-
-    /**
      * 查询暂存订单列表
      *
      * @param status     状态筛选（RECEIVED/SENT_TO_FACTORY/BACK_TO_STORE，为空则全部）

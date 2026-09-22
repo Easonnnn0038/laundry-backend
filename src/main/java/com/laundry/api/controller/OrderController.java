@@ -17,9 +17,6 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,18 +44,6 @@ public class OrderController {
                 currentUserUtil.getOperatorId(),
                 currentUserUtil.getOperatorName());
         return Result.success(resp);
-    }
-
-    @Operation(summary = "今日收衣单数", description = "用于显示今日业绩或订单号流水（当前返回 count 字段）")
-    @GetMapping("/today-count")
-    public Result<Map<String, Object>> todayCount() {
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        int count = orderService.getTodayOrderCount(today, currentUserUtil.getStoreCode());
-        Map<String, Object> data = new HashMap<>();
-        data.put("today", today);
-        data.put("count", count);
-        data.put("storeCode", currentUserUtil.getStoreCode());
-        return Result.success(data);
     }
 
     @Operation(summary = "生成Code128条码图片", description = "根据给定条码数字生成 PNG Base64 图片（带data:image前缀，可直接<img src=显示）")

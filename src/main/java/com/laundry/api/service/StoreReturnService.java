@@ -162,7 +162,11 @@ public class StoreReturnService {
                 """, reason.trim(), LocalDateTime.now(), operatorId, pkg.get("id"));
         jdbc.update("UPDATE factory_package SET status='FROZEN', frozen_reason=?, update_time=? WHERE id=?",
                 reason.trim(), LocalDateTime.now(), pkg.get("package_id"));
-        // TODO(customer-service): 客服模块上线后将此异常同步为正式客服工单；当前先冻结大件并保留原因。
+        jdbc.update("""
+                INSERT INTO store_return_error(store_code,package_no,order_no,return_batch_id,type,description,
+                    created_by,created_at) SELECT ?,fp.package_no,fp.order_no,?,'OTHER',?,?,?
+                FROM factory_package fp WHERE fp.id=?
+                """, storeCode,batchId,reason.trim(),operatorId,LocalDateTime.now(),pkg.get("package_id"));
         updateBatchStatus(batchId);
         return packageDetail(batchId, packageNo, storeCode);
     }

@@ -13,8 +13,8 @@ public class DashboardRecentOrderResponse {
     /** 订单ID（操作时用） */
     private Long orderId;
 
-    /** 取衣码（订单号最后3位，或订单号本身） */
-    private String code;
+    /** 业务订单号；不是回店后才生成的四位取衣码。 */
+    private String orderNo;
 
     /** 客户姓名 */
     private String customer;

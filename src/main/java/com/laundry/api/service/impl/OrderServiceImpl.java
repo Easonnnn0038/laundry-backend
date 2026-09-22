@@ -339,7 +339,8 @@ public class OrderServiceImpl implements OrderService {
             item.setSize(req.getSize());
             item.setDefect(req.getDefect());
             item.setSpecial(req.getSpecial());
-            item.setShelfCode(req.getShelfCode());
+            // 货架号在衣物回店后由货架管理统一分配。
+            item.setShelfCode(null);
             item.setShelfStatus(0);
             item.setErrorBackFlag(0);
             item.setCreateTime(now);
@@ -351,7 +352,7 @@ public class OrderServiceImpl implements OrderService {
             ir.setId(item.getId());
             ir.setItemSeq(itemSeq);
             ir.setBarcode(barcode);
-            ir.setBarcodeImageBase64(BarcodeUtil.generateCode128DataUri(barcode, 360, 80));
+            ir.setBarcodeImageBase64(BarcodeUtil.generateCode128SvgDataUri(barcode));
             ir.setCategoryName(item.getCategoryName());
             ir.setCategoryGroup(cr.category.getCategoryGroup());
             ir.setQuantity(qty);
@@ -363,7 +364,7 @@ public class OrderServiceImpl implements OrderService {
             ir.setSize(req.getSize());
             ir.setDefect(req.getDefect());
             ir.setSpecial(req.getSpecial());
-            ir.setShelfCode(req.getShelfCode());
+            ir.setShelfCode(null);
             itemResps.add(ir);
             itemSeq++;
         }
@@ -769,15 +770,6 @@ public class OrderServiceImpl implements OrderService {
         };
     }
 
-    @Override
-    public Integer getTodayOrderCount(String today, String storeCode) {
-        // today 格式 20260812；orderNo = storeCode(3) + today(8) + seq(3)
-        String prefix = storeCode + today;
-        LambdaQueryWrapper<LaundryOrder> qw = new LambdaQueryWrapper<>();
-        qw.likeRight(LaundryOrder::getOrderNo, prefix);
-        return Math.toIntExact(orderMapper.selectCount(qw));
-    }
-
     // =========================================================
     // 暂存列表与详情
     // =========================================================
@@ -1085,8 +1077,7 @@ public class OrderServiceImpl implements OrderService {
                 for (LaundryOrder o : orders) {
                     DashboardRecentOrderResponse r = new DashboardRecentOrderResponse();
                     r.setOrderId(o.getId());
-                    // 取衣码：订单号（14位）作为显示，也可以截取末尾3位展示短码
-                    r.setCode(o.getOrderNo());
+                    r.setOrderNo(o.getOrderNo());
                     r.setCustomer(o.getCustomerName());
                     r.setItems(o.getTotalCount() == null ? 0 : o.getTotalCount());
                     r.setStatus(o.getStatus());

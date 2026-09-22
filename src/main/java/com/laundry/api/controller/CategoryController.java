@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 衣物类别控制器
@@ -30,12 +29,6 @@ public class CategoryController {
     @GetMapping("/list")
     public Result<List<CategoryResponse>> list() {
         return Result.success(categoryService.listAll());
-    }
-
-    @Operation(summary = "获取分组类别（Tab切换用）", description = "返回Map结构，key=板块分组（CLOTHES/SHOES/HOME/IRON/LEATHER/BAG），value=该板块下的类别列表")
-    @GetMapping("/grouped")
-    public Result<Map<String, List<CategoryResponse>>> grouped() {
-        return Result.success(categoryService.listGrouped());
     }
 
     @Operation(summary = "关键字搜索类别", description = "按项目名称（如衬衫、运动鞋）模糊匹配搜索")

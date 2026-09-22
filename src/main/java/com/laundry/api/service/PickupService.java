@@ -83,6 +83,16 @@ public class PickupService {
                 """, now, operatorName, now, orderId);
         if (changed != 1) throw new IllegalArgumentException("订单状态已变化，请刷新后重试");
         jdbc.update("""
+                INSERT INTO shelf_operation_log(store_code,order_id,order_item_id,order_no,barcode,action,
+                    from_shelf_no,operator_id,operator_name,operate_time)
+                SELECT ?,oi.order_id,oi.id,oi.order_no,oi.barcode,'OFF_SHELF',CAST(oi.shelf_code AS UNSIGNED),?,?,?
+                FROM order_item oi WHERE oi.order_id=? AND oi.shelf_status=1
+                """, storeCode, operatorId, operatorName, now, orderId);
+        jdbc.update("""
+                DELETE sp FROM shelf_position sp JOIN order_item oi ON oi.id=sp.order_item_id
+                WHERE oi.order_id=? AND sp.store_code=? AND sp.status='OCCUPIED'
+                """, orderId, storeCode);
+        jdbc.update("""
                 UPDATE order_item SET status='PICKED_UP',
                     off_shelf_time=CASE WHEN shelf_status=1 THEN ? ELSE off_shelf_time END,
                     shelf_status=CASE WHEN shelf_status=1 THEN 2 ELSE shelf_status END,
