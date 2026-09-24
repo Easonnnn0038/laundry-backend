@@ -20,7 +20,7 @@ public class StoreOperationsController {
     public StoreOperationsController(JdbcTemplate jdbc, CurrentUserUtil user) { this.jdbc = jdbc; this.user = user; }
 
     public record NotifyRequest(@NotBlank String orderNo, @NotBlank String channel) {}
-    public record ErrorRequest(@NotBlank String packageNo, @NotBlank String type, @NotBlank String description) {}
+    public record ErrorRequest(@NotBlank String orderNo, @NotBlank String type, @NotBlank String description) {}
     public record ResolveRequest(@NotBlank String action, @NotBlank String note) {}
 
     @GetMapping("/notifications")
@@ -64,7 +64,7 @@ public class StoreOperationsController {
         String term = keyword == null ? "" : keyword.trim();
         if (term.length()<3 || term.length()>30) throw new IllegalArgumentException("请输入至少3位订单号、衣物码或手机号");
         return Result.success(jdbc.queryForList("""
-            SELECT o.order_no AS orderNo, o.customer_phone AS phone, o.status AS orderStatus,
+            SELECT o.id AS orderId, o.order_no AS orderNo, o.customer_phone AS phone, o.status AS orderStatus,
                    o.receive_time AS receiveTime, o.pickup_time AS pickupTime,
                    i.barcode, i.category_name AS categoryName, i.color, i.brand,
                    i.status AS itemStatus, i.shelf_code AS shelfCode, i.error_back_flag AS errorBackFlag,
@@ -102,41 +102,43 @@ public class StoreOperationsController {
         if (!List.of("MISSING","WRONG_ITEM","WRONG_STORE","OTHER").contains(type)) throw new IllegalArgumentException("无效异常类型");
         String description = request.description().trim();
         if (description.isEmpty() || description.length()>500) throw new IllegalArgumentException("异常说明需为1至500字");
-        String packageNo = request.packageNo().trim();
+        String orderNo = request.orderNo().trim();
         List<Map<String,Object>> found = jdbc.queryForList("""
-            SELECT fp.id, fp.order_no, fp.status AS packageStatus, o.store_code AS expectedStore,
+            SELECT fp.id, fp.package_no, fp.order_no, fp.status AS packageStatus, o.store_code AS expectedStore,
                    rbp.return_batch_id AS batchId,rbp.store_receive_status AS receiveStatus
             FROM factory_package fp JOIN laundry_order o ON o.id=fp.order_id
-            LEFT JOIN factory_return_batch_package rbp ON rbp.package_id=fp.id
-            WHERE fp.package_no=? ORDER BY rbp.id DESC LIMIT 1
-            """, packageNo);
-        if (found.isEmpty()) throw new IllegalArgumentException("大件码不存在，请先核对");
+            JOIN factory_return_batch_package rbp ON rbp.package_id=fp.id
+            WHERE fp.order_no=? AND rbp.store_receive_status IN ('WAIT_SCAN','EXCEPTION')
+            ORDER BY rbp.id DESC
+            """, orderNo);
+        if (found.isEmpty()) throw new IllegalArgumentException("订单尚未发回门店、已完成签收或订单号不存在");
         Map<String,Object> pkg = found.get(0);
-        if (pkg.get("batchId")==null || !List.of("WAIT_SCAN", "EXCEPTION").contains(String.valueOf(pkg.get("receiveStatus"))))
-            throw new IllegalArgumentException("大件尚未发回门店，或已完成签收");
         boolean wrongStore = !user.getStoreCode().equals(pkg.get("expectedStore"));
-        if (wrongStore != "WRONG_STORE".equals(type)) throw new IllegalArgumentException(wrongStore ? "该大件属于其他门店，请选错店" : "该大件属于本店，请选择其他异常类型");
-        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM store_return_error WHERE store_code=? AND package_no=? AND status='OPEN'", Integer.class, user.getStoreCode(),packageNo);
-        if (open!=null && open>0) throw new IllegalArgumentException("该大件已有待处理异常");
-        if (!wrongStore && "WAIT_SCAN".equals(pkg.get("receiveStatus"))) {
+        if (wrongStore != "WRONG_STORE".equals(type)) throw new IllegalArgumentException(wrongStore ? "该订单属于其他门店，请选择错店" : "该订单属于本店，请选择其他异常类型");
+        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM store_return_error WHERE store_code=? AND order_no=? AND status='OPEN'", Integer.class, user.getStoreCode(),orderNo);
+        if (open!=null && open>0) throw new IllegalArgumentException("该订单已有待处理异常");
+        if (!wrongStore) {
             jdbc.update("""
                 UPDATE factory_return_batch_package SET store_receive_status='EXCEPTION',exception_reason=?,
-                    exception_time=?,exception_operator_id=? WHERE package_id=? AND store_receive_status='WAIT_SCAN'
-                """, description,LocalDateTime.now(),user.getOperatorId(),pkg.get("id"));
-            jdbc.update("UPDATE factory_package SET status='FROZEN',frozen_reason=?,update_time=? WHERE id=?", description,LocalDateTime.now(),pkg.get("id"));
+                    exception_time=?,exception_operator_id=?
+                WHERE package_id IN (SELECT id FROM factory_package WHERE order_no=?) AND store_receive_status='WAIT_SCAN'
+                """, description,LocalDateTime.now(),user.getOperatorId(),orderNo);
+            jdbc.update("UPDATE factory_package SET status='FROZEN',frozen_reason=?,update_time=? WHERE order_no=? AND status='RETURNING'",
+                    description,LocalDateTime.now(),orderNo);
         }
         if (!wrongStore && "WRONG_ITEM".equals(type)) {
             jdbc.update("""
                 UPDATE order_item oi JOIN factory_package_item fpi ON fpi.order_item_id=oi.id
+                JOIN factory_package fp ON fp.id=fpi.package_id
                 SET oi.error_back_flag=1,oi.error_back_remark=?,oi.error_back_time=?
-                WHERE fpi.package_id=?
-                """,description,LocalDateTime.now(),pkg.get("id"));
+                WHERE fp.order_no=?
+                """,description,LocalDateTime.now(),orderNo);
         }
         jdbc.update("""
             INSERT INTO store_return_error(store_code,package_no,order_no,return_batch_id,type,description,
                 created_by,created_at) VALUES (?,?,?,?,?,?,?,?)
-            """,user.getStoreCode(),packageNo,pkg.get("order_no"),pkg.get("batchId"),type,description,user.getOperatorId(),LocalDateTime.now());
-        return Result.success(Map.of("packageNo",packageNo,"status","OPEN"));
+            """,user.getStoreCode(),pkg.get("package_no"),orderNo,pkg.get("batchId"),type,description,user.getOperatorId(),LocalDateTime.now());
+        return Result.success(Map.of("orderNo",orderNo,"status","OPEN"));
     }
 
     @PostMapping("/return-errors/{id}/resolve")
@@ -151,24 +153,27 @@ public class StoreOperationsController {
         if (rows.size()!=1 || !"OPEN".equals(rows.get(0).get("status"))) throw new IllegalArgumentException("异常不存在或已处理");
         Map<String,Object> error=rows.get(0);
         if ("RECHECK".equals(action)) {
-            if ("WRONG_STORE".equals(error.get("type"))) throw new IllegalArgumentException("错店大件不能在本店重新签收");
+            if ("WRONG_STORE".equals(error.get("type"))) throw new IllegalArgumentException("错店订单不能在本店重新签收");
             int changed=jdbc.update("""
                 UPDATE factory_return_batch_package SET store_receive_status='WAIT_SCAN',exception_reason=NULL,
                     exception_time=NULL,exception_operator_id=NULL
-                WHERE return_batch_id=? AND package_no=? AND store_code=? AND store_receive_status='EXCEPTION'
-                """,error.get("return_batch_id"),error.get("package_no"),user.getStoreCode());
-            if (changed!=1) throw new IllegalArgumentException("大件当前无法重新核对");
-            jdbc.update("DELETE FROM factory_store_receive_scan WHERE package_id=(SELECT id FROM factory_package WHERE package_no=?)",error.get("package_no"));
-            jdbc.update("UPDATE factory_package SET status='RETURNING',frozen_reason=NULL,update_time=? WHERE package_no=?",LocalDateTime.now(),error.get("package_no"));
+                WHERE package_id IN (SELECT id FROM factory_package WHERE order_no=?)
+                  AND store_code=? AND store_receive_status='EXCEPTION'
+                """,error.get("order_no"),user.getStoreCode());
+            if (changed<1) throw new IllegalArgumentException("订单当前无法重新核对");
+            jdbc.update("DELETE s FROM factory_store_receive_scan s JOIN factory_package fp ON fp.id=s.package_id WHERE fp.order_no=?",error.get("order_no"));
+            jdbc.update("UPDATE factory_package SET status='RETURNING',frozen_reason=NULL,update_time=? WHERE order_no=? AND status='FROZEN'",LocalDateTime.now(),error.get("order_no"));
             jdbc.update("""
                 UPDATE order_item oi JOIN factory_package_item fpi ON fpi.order_item_id=oi.id
                 JOIN factory_package fp ON fp.id=fpi.package_id
                 SET oi.error_back_flag=0,oi.error_back_remark=NULL,oi.error_back_time=NULL
-                WHERE fp.package_no=?
-                """,error.get("package_no"));
+                WHERE fp.order_no=?
+                """,error.get("order_no"));
         }
-        jdbc.update("UPDATE store_return_error SET status=?,resolution_note=?,resolved_by=?,resolved_at=? WHERE id=?",
-            action,note,user.getOperatorId(),LocalDateTime.now(),id);
+        jdbc.update("""
+            UPDATE store_return_error SET status=?,resolution_note=?,resolved_by=?,resolved_at=?
+            WHERE store_code=? AND order_no=? AND status='OPEN'
+            """,action,note,user.getOperatorId(),LocalDateTime.now(),user.getStoreCode(),error.get("order_no"));
         return Result.success(Map.of("id",id,"status",action));
     }
 }

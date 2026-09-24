@@ -39,6 +39,10 @@ public class StagingDetailResponse {
     /** 门店名称 */
     private String storeName;
 
+    private String storePhone;
+
+    private String storeAddress;
+
     /** 操作员姓名 */
     private String operatorName;
 
@@ -65,6 +69,12 @@ public class StagingDetailResponse {
 
     /** 应收合计 */
     private BigDecimal totalReceivable;
+
+    private BigDecimal totalPaid;
+
+    private BigDecimal debtAmount;
+
+    private String paymentMethodLabel;
 
     /** 订单备注 */
     private String remark;
@@ -96,6 +106,12 @@ public class StagingDetailResponse {
     /** 关联会员卡号 */
     private String memberCardNo;
 
+    private Boolean usedMemberCard;
+
+    private String cardNo;
+
+    private String cardTypeName;
+
     /** 卡扣金额 */
     private BigDecimal cardDeduct;
 
@@ -104,6 +120,8 @@ public class StagingDetailResponse {
 
     /** 补差方式 */
     private String extraMethod;
+
+    private String extraMethodLabel;
 
     /** 衣物明细列表 */
     private List<StagingDetailItemResponse> items;

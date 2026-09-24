@@ -56,7 +56,7 @@ public interface OrderService {
      * @param orderId 订单ID
      * @return 暂存详情（含衣物明细、瑕疵照片、货架位置）
      */
-    StagingDetailResponse getStagingDetail(Long orderId);
+    StagingDetailResponse getStagingDetail(Long orderId, String storeCode);
 
     /**
      * 首页 4 个统计卡片数据

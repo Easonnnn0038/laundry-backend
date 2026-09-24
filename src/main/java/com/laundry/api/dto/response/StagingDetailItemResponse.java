@@ -17,6 +17,9 @@ public class StagingDetailItemResponse {
     /** 条码 */
     private String barcode;
 
+    /** Code128条码图片，用于详情预览和补打标签 */
+    private String barcodeImageBase64;
+
     /** 序号 */
     private Integer itemSeq;
 

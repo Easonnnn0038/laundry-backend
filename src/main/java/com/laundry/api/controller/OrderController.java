@@ -84,7 +84,7 @@ public class OrderController {
     @GetMapping("/staging-detail/{orderId}")
     public Result<StagingDetailResponse> stagingDetail(
             @Parameter(description = "订单ID", required = true) @PathVariable Long orderId) {
-        StagingDetailResponse detail = orderService.getStagingDetail(orderId);
+        StagingDetailResponse detail = orderService.getStagingDetail(orderId, currentUserUtil.getStoreCode());
         return Result.success(detail);
     }
 

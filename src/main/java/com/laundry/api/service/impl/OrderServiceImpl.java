@@ -865,9 +865,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
-    public StagingDetailResponse getStagingDetail(Long orderId) {
+    public StagingDetailResponse getStagingDetail(Long orderId, String storeCode) {
         LaundryOrder order = orderMapper.selectById(orderId);
-        if (order == null) throw new RuntimeException("订单不存在");
+        if (order == null || !order.getStoreCode().equals(storeCode)) throw new RuntimeException("订单不存在");
 
         StagingDetailResponse resp = new StagingDetailResponse();
         resp.setId(order.getId());
@@ -887,6 +887,9 @@ public class OrderServiceImpl implements OrderService {
         resp.setUrgentFlag(order.getUrgentFlag());
         resp.setUrgentSurcharge(order.getUrgentSurcharge());
         resp.setTotalReceivable(order.getTotalReceivable());
+        resp.setTotalPaid(order.getTotalPaid());
+        resp.setDebtAmount(order.getDebtAmount());
+        resp.setPaymentMethodLabel(paymentMethodLabel(order.getPaymentMethod()));
         resp.setRemark(order.getRemark());
         resp.setDefectPhotosJson(order.getDefectPhotos());
 
@@ -905,14 +908,28 @@ public class OrderServiceImpl implements OrderService {
         // 会员卡信息（卡扣用的卡）
         resp.setMemberCardId(order.getMemberCardId());
         resp.setMemberCardNo(order.getCardNo());
+        resp.setUsedMemberCard(order.getMemberCardId() != null);
+        resp.setCardNo(order.getCardNo());
         resp.setCardDeduct(order.getCardDeduct());
         resp.setExtraPayment(order.getExtraPayment());
         resp.setExtraMethod(order.getExtraMethod());
+        resp.setExtraMethodLabel(paymentMethodLabel(order.getExtraMethod()));
+        if (order.getMemberCardId() != null) {
+            MemberCard card = cardMapper.selectById(order.getMemberCardId());
+            if (card != null) {
+                MemberCardType type = cardTypeMapper.selectById(card.getCardTypeId());
+                if (type != null) resp.setCardTypeName(type.getName());
+            }
+        }
 
         // 门店名称
         Store store = storeMapper.selectOne(new LambdaQueryWrapper<Store>()
                 .eq(Store::getStoreCode, order.getStoreCode()));
         resp.setStoreName(store != null ? store.getStoreName() : order.getStoreCode());
+        if (store != null) {
+            resp.setStorePhone(store.getPhone());
+            resp.setStoreAddress(store.getAddress());
+        }
 
         // 查询衣物明细
         LambdaQueryWrapper<OrderItem> itemQw = new LambdaQueryWrapper<>();
@@ -949,6 +966,7 @@ public class OrderServiceImpl implements OrderService {
             StagingDetailItemResponse ir = new StagingDetailItemResponse();
             ir.setId(item.getId());
             ir.setBarcode(item.getBarcode());
+            ir.setBarcodeImageBase64(BarcodeUtil.generateCode128SvgDataUri(item.getBarcode()));
             ir.setItemSeq(item.getItemSeq());
             ir.setCategoryName(item.getCategoryName());
             ir.setColor(item.getColor());

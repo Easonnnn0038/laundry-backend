@@ -18,9 +18,8 @@ public class StoreReturnController {
         this.service = service; this.currentUser = currentUser;
     }
 
-    public record ScanRequest(@NotBlank String packageNo, @NotBlank String barcode) {}
-    public record PackageRequest(@NotBlank String packageNo) {}
-    public record ExceptionRequest(@NotBlank String packageNo, @NotBlank String reason) {}
+    public record OrderScanRequest(@NotBlank String barcode) {}
+    public record OrderExceptionRequest(@NotBlank String reason) {}
 
     @GetMapping("/batches")
     public Result<List<Map<String, Object>>> batches() {
@@ -32,28 +31,31 @@ public class StoreReturnController {
         return Result.success(service.batch(batchId, currentUser.getStoreCode()));
     }
 
-    @GetMapping("/batches/{batchId}/packages/{packageNo}")
-    public Result<Map<String, Object>> packageDetail(@PathVariable long batchId, @PathVariable String packageNo) {
-        return Result.success(service.packageDetail(batchId, packageNo, currentUser.getStoreCode()));
+    @GetMapping("/batches/{batchId}/orders/{orderNo}")
+    public Result<Map<String, Object>> orderDetail(@PathVariable long batchId, @PathVariable String orderNo) {
+        return Result.success(service.orderDetail(batchId, orderNo, currentUser.getStoreCode()));
     }
 
-    @PostMapping("/batches/{batchId}/scan")
-    public Result<Map<String, Object>> scan(@PathVariable long batchId, @Valid @RequestBody ScanRequest request) {
-        return Result.success(service.scan(batchId, request.packageNo(), request.barcode(),
+    @PostMapping("/batches/{batchId}/orders/{orderNo}/scan")
+    public Result<Map<String, Object>> scanOrder(@PathVariable long batchId, @PathVariable String orderNo,
+                                                 @Valid @RequestBody OrderScanRequest request) {
+        return Result.success(service.scanOrder(batchId, orderNo, request.barcode(),
                 currentUser.getStoreCode(), currentUser.getOperatorId()));
     }
 
-    @PostMapping("/batches/{batchId}/confirm")
-    public Result<Map<String, Object>> confirm(@PathVariable long batchId, @Valid @RequestBody PackageRequest request) {
-        return Result.success(service.confirm(batchId, request.packageNo(), currentUser.getStoreCode(),
+    @PostMapping("/batches/{batchId}/orders/{orderNo}/confirm")
+    public Result<Map<String, Object>> confirmOrder(@PathVariable long batchId, @PathVariable String orderNo) {
+        return Result.success(service.confirmOrder(batchId, orderNo, currentUser.getStoreCode(),
                 currentUser.getOperatorId(), currentUser.getOperatorName()));
     }
 
-    @PostMapping("/batches/{batchId}/exception")
-    public Result<Map<String, Object>> reportException(@PathVariable long batchId, @Valid @RequestBody ExceptionRequest request) {
+    @PostMapping("/batches/{batchId}/orders/{orderNo}/exception")
+    public Result<Map<String, Object>> reportOrderException(@PathVariable long batchId, @PathVariable String orderNo,
+                                                            @Valid @RequestBody OrderExceptionRequest request) {
         if (!"ADMIN".equals(currentUser.getUser().getRole()))
             throw new org.springframework.security.access.AccessDeniedException("仅管理员可处理错误回店");
-        return Result.success(service.reportException(batchId, request.packageNo(), request.reason(),
+        return Result.success(service.reportOrderException(batchId, orderNo, request.reason(),
                 currentUser.getStoreCode(), currentUser.getOperatorId()));
     }
+
 }
