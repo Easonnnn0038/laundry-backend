@@ -18,6 +18,8 @@ public class LaundryOrder {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private String requestId;
+
     /** 订单编号：门店3位+日期8位YYYYMMDD+当日流水3位，共14位 */
     private String orderNo;
 

@@ -7,6 +7,7 @@ import java.util.List;
 @Data
 public class PrintTaskMessage implements Serializable {
 
+    private String eventId;
     private String orderNo;
     private String customerName;
     private String customerPhone;

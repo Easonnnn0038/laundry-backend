@@ -15,6 +15,7 @@ import com.laundry.api.mapper.MemberCardRechargeMapper;
 import com.laundry.api.mapper.MemberCardTypeMapper;
 import com.laundry.api.mapper.SeqCounterMapper;
 import com.laundry.api.service.MemberCardService;
+import com.laundry.api.service.IdempotencyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,9 @@ public class MemberCardServiceImpl implements MemberCardService {
     @Autowired
     private SeqCounterMapper seqCounterMapper;
 
+    @Autowired
+    private IdempotencyService idempotencyService;
+
     @Override
     public List<MemberCardTypeResponse> listCardTypes() {
         LambdaQueryWrapper<MemberCardType> qw = new LambdaQueryWrapper<>();
@@ -84,6 +88,10 @@ public class MemberCardServiceImpl implements MemberCardService {
     @Transactional(rollbackFor = Exception.class)
     public MemberCardSimpleResponse createCard(MemberCardCreateRequest request, String storeCode,
                                                Long operatorId, String operatorName) {
+        String scope = "CREATE_MEMBER_CARD:" + storeCode;
+        var previous = idempotencyService.begin(scope, request.getRequestId(), MemberCardSimpleResponse.class);
+        if (previous.isPresent()) return previous.get();
+        validatePaymentMethod(request.getPaymentMethod());
         // 1. 查找客户ID（没有就新增）
         Long customerId = request.getCustomerId();
         if (customerId == null) {
@@ -108,6 +116,10 @@ public class MemberCardServiceImpl implements MemberCardService {
             customerId = c.getId();
         }
         Customer customer = customerMapper.selectById(customerId);
+        if (customer == null || !storeCode.equals(customer.getStoreCode())) {
+            throw new IllegalArgumentException("客户不存在或不属于当前门店");
+        }
+        customer = customerMapper.selectForUpdate(customerId);
 
         // 2. 校验：该客户是否已有正常卡（一人一卡）
         LambdaQueryWrapper<MemberCard> existQw = new LambdaQueryWrapper<>();
@@ -152,6 +164,7 @@ public class MemberCardServiceImpl implements MemberCardService {
 
         // 6. 写入充值记录（首次办卡充值）
         MemberCardRecharge rc = new MemberCardRecharge();
+        rc.setRequestId(request.getRequestId());
         rc.setCardId(card.getId());
         rc.setCardNo(cardNo);
         rc.setCustomerId(customerId);
@@ -171,27 +184,35 @@ public class MemberCardServiceImpl implements MemberCardService {
         rechargeMapper.insert(rc);
 
         log.info("办卡成功 cardNo={}, customer={}, 充值={}", cardNo, customer.getName(), rechargeAmount);
-        return toSimpleResponse(card);
+        MemberCardSimpleResponse response = toSimpleResponse(card);
+        idempotencyService.complete(scope, request.getRequestId(), response);
+        return response;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public MemberCardSimpleResponse recharge(MemberCardRechargeRequest request,
-                                             Long operatorId, String operatorName) {
-        MemberCard card = cardMapper.selectById(request.getCardId());
+                                             Long operatorId, String operatorName, boolean admin) {
+        String scope = "RECHARGE_MEMBER_CARD:" + request.getCardId();
+        var previous = idempotencyService.begin(scope, request.getRequestId(), MemberCardSimpleResponse.class);
+        if (previous.isPresent()) return previous.get();
+        validatePaymentMethod(request.getPaymentMethod());
+        MemberCard card = cardMapper.selectForUpdate(request.getCardId());
         if (card == null || card.getStatus() != 1) {
             throw new RuntimeException("会员卡不存在或已停用");
         }
 
-        // 充值金额：优先使用前端传入的 amount；若没传则根据 cardTypeId 推导
-        BigDecimal amount = request.getAmount();
-        if ((amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) && request.getCardTypeId() != null) {
+        BigDecimal amount;
+        if (request.getCardTypeId() != null) {
             MemberCardType t = cardTypeMapper.selectById(request.getCardTypeId());
             if (t == null || t.getStatus() != 1) throw new RuntimeException("充值类型不存在");
             amount = t.getAmount();
+        } else {
+            if (!admin) throw new org.springframework.security.access.AccessDeniedException("仅管理员可以自定义充值金额");
+            amount = request.getAmount();
         }
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new RuntimeException("请输入或选择充值金额");
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0 || amount.compareTo(new BigDecimal("100000")) > 0) {
+            throw new IllegalArgumentException("充值金额必须大于0且不超过100000元");
         }
 
         BigDecimal before = null;
@@ -218,6 +239,7 @@ public class MemberCardServiceImpl implements MemberCardService {
 
         // 写充值记录
         MemberCardRecharge rc = new MemberCardRecharge();
+        rc.setRequestId(request.getRequestId());
         rc.setCardId(card.getId());
         rc.setCardNo(card.getCardNo());
         rc.setCustomerId(card.getCustomerId());
@@ -234,7 +256,9 @@ public class MemberCardServiceImpl implements MemberCardService {
         rechargeMapper.insert(rc);
 
         log.info("会员卡充值 cardNo={}, 金额={}, 充值后余额={}", card.getCardNo(), amount, after);
-        return toSimpleResponse(card);
+        MemberCardSimpleResponse response = toSimpleResponse(card);
+        idempotencyService.complete(scope, request.getRequestId(), response);
+        return response;
     }
 
     // ---------- 内部转换方法 ----------
@@ -260,5 +284,11 @@ public class MemberCardServiceImpl implements MemberCardService {
         r.setStatus(c.getStatus());
         r.setCreateTime(c.getCreateTime());
         return r;
+    }
+
+    private void validatePaymentMethod(String method) {
+        if (method == null || !java.util.Set.of("CASH", "WECHAT", "ALIPAY").contains(method)) {
+            throw new IllegalArgumentException("支付方式不正确");
+        }
     }
 }

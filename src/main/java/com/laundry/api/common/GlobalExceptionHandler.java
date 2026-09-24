@@ -12,6 +12,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.http.HttpStatus;
 
 import jakarta.servlet.http.HttpServletRequest;
 import com.laundry.api.service.MaintenanceLogService;
@@ -33,6 +35,7 @@ public class GlobalExceptionHandler {
      * 参数校验异常 - @RequestBody @Valid
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleMethodArgumentNotValid(MethodArgumentNotValidException e, HttpServletRequest request) {
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
@@ -46,6 +49,7 @@ public class GlobalExceptionHandler {
      * 参数校验异常 - @ModelAttribute
      */
     @ExceptionHandler(BindException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleBindException(BindException e, HttpServletRequest request) {
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
@@ -59,6 +63,7 @@ public class GlobalExceptionHandler {
      * 认证异常 - 用户名或密码错误
      */
     @ExceptionHandler(BadCredentialsException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Result<Void> handleBadCredentials(BadCredentialsException e) {
         log.warn("认证失败: 用户名或密码错误");
         return Result.error(401, "用户名或密码错误");
@@ -68,6 +73,7 @@ public class GlobalExceptionHandler {
      * 认证异常 - 用户不存在
      */
     @ExceptionHandler(UsernameNotFoundException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Result<Void> handleUsernameNotFound(UsernameNotFoundException e) {
         log.warn("认证失败: {}", e.getMessage());
         return Result.error(401, "用户不存在");
@@ -77,6 +83,7 @@ public class GlobalExceptionHandler {
      * 认证异常 - 账号被禁用
      */
     @ExceptionHandler(DisabledException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
     public Result<Void> handleDisabled(DisabledException e) {
         log.warn("账号已被禁用");
         return Result.error(403, "账号已被禁用，请联系管理员");
@@ -86,6 +93,7 @@ public class GlobalExceptionHandler {
      * 认证异常 - 其他
      */
     @ExceptionHandler(AuthenticationException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Result<Void> handleAuthentication(AuthenticationException e) {
         String msg = e.getMessage();
         if (msg == null || msg.isBlank()) msg = "用户名或密码错误";
@@ -97,6 +105,7 @@ public class GlobalExceptionHandler {
      * 非法参数异常
      */
     @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleIllegalArgument(IllegalArgumentException e, HttpServletRequest request) {
         log.warn("非法参数: {}", e.getMessage());
         maintenanceLog.record("BUSINESS_EXCEPTION","WARN",module(request),e.getMessage(),e,request);
@@ -104,6 +113,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(AccessDeniedException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
     public Result<Void> handleAccessDenied(AccessDeniedException e) {
         return Result.error(403, e.getMessage());
     }
@@ -112,6 +122,7 @@ public class GlobalExceptionHandler {
      * 业务运行时异常
      */
     @ExceptionHandler(RuntimeException.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleRuntimeException(RuntimeException e, HttpServletRequest request) {
         log.error("请求 [{}] {} 发生运行时异常: {}", request.getMethod(), request.getRequestURI(), e.getMessage(), e);
         maintenanceLog.record("SYSTEM_ERROR","ERROR",module(request),e.getMessage(),e,request);
@@ -122,6 +133,7 @@ public class GlobalExceptionHandler {
      * 其他未知异常
      */
     @ExceptionHandler(Exception.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleException(Exception e, HttpServletRequest request) {
         log.error("请求 [{}] {} 发生异常: {}", request.getMethod(), request.getRequestURI(), e.getMessage(), e);
         maintenanceLog.record("SYSTEM_ERROR","ERROR",module(request),e.getMessage(),e,request);

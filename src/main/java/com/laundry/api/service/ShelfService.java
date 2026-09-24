@@ -52,9 +52,11 @@ public class ShelfService {
         Map<String,Object> p=positions.get(0);if(!barcode.trim().equals(p.get("barcode")))throw new IllegalArgumentException("衣物码与预留位置不一致");
         if(toTime(p.get("reserved_until")).isBefore(LocalDateTime.now())){jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND shelf_no=?",store,shelfNo);throw new IllegalArgumentException("预留已超时，请重新扫描");}
         Map<String,Object> item=item(barcode,store,true);String mode=String.valueOf(p.get("reservation_mode"));Integer old=parseShelf(item.get("shelf_code"));LocalDateTime now=LocalDateTime.now();
-        if("MOVE".equals(mode)){if(old==null)throw new IllegalArgumentException("原货架位置不存在");jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND shelf_no=? AND status='OCCUPIED' AND order_item_id=?",store,old,item.get("id"));}
-        jdbc.update("UPDATE shelf_position SET status='OCCUPIED',reservation_mode=NULL,reserved_until=NULL,operator_id=?,operator_name=?,update_time=? WHERE store_code=? AND shelf_no=?",operatorId,operatorName,now,store,shelfNo);
-        jdbc.update("UPDATE order_item SET shelf_status=1,shelf_code=?,on_shelf_time=?,off_shelf_time=NULL,update_time=? WHERE id=?",String.valueOf(shelfNo),now,now,item.get("id"));
+        if("MOVE".equals(mode)){if(old==null)throw new IllegalArgumentException("原货架位置不存在");int removed=jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND shelf_no=? AND status='OCCUPIED' AND order_item_id=?",store,old,item.get("id"));if(removed!=1)throw new IllegalArgumentException("原货架状态已变化，请重新扫描");}
+        int occupied=jdbc.update("UPDATE shelf_position SET status='OCCUPIED',reservation_mode=NULL,reserved_until=NULL,operator_id=?,operator_name=?,update_time=? WHERE store_code=? AND shelf_no=? AND status='RESERVED' AND order_item_id=? AND barcode=?",operatorId,operatorName,now,store,shelfNo,item.get("id"),barcode.trim());
+        if(occupied!=1)throw new IllegalArgumentException("预留位置状态已变化，请重新扫描");
+        int itemChanged=jdbc.update("UPDATE order_item SET shelf_status=1,shelf_code=?,on_shelf_time=?,off_shelf_time=NULL,update_time=? WHERE id=? AND status='BACK_TO_STORE'",String.valueOf(shelfNo),now,now,item.get("id"));
+        if(itemChanged!=1)throw new IllegalArgumentException("衣物状态已变化，无法上架");
         jdbc.update("""
           INSERT INTO shelf_operation_log(store_code,order_id,order_item_id,order_no,barcode,action,from_shelf_no,to_shelf_no,
             operator_id,operator_name,operate_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)

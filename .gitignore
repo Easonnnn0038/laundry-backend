@@ -3,4 +3,6 @@ target/
 *.iml
 *.log
 uploads/
+backups/
+.env
 .DS_Store

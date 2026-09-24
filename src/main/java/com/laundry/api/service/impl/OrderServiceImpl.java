@@ -9,6 +9,7 @@ import com.laundry.api.dto.response.*;
 import com.laundry.api.entity.*;
 import com.laundry.api.mapper.*;
 import com.laundry.api.service.OrderService;
+import com.laundry.api.service.IdempotencyService;
 import com.laundry.api.mq.PrintTaskMessage;
 import com.laundry.api.mq.PrintTaskProducer;
 import com.laundry.api.utils.BarcodeUtil;
@@ -69,13 +70,25 @@ public class OrderServiceImpl implements OrderService {
     @Autowired private StoreMapper storeMapper;
     @Autowired private SeqCounterMapper seqCounterMapper;
     @Autowired private PrintTaskProducer printTaskProducer;
+    @Autowired private IdempotencyService idempotencyService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ReceiveOrderResponse receiveOrder(ReceiveOrderRequest request, String storeCode,
-                                             Long operatorId, String operatorName) {
+                                             Long operatorId, String operatorName, boolean admin) {
+        String idempotencyScope = "RECEIVE_ORDER:" + storeCode;
+        var previous = idempotencyService.begin(idempotencyScope, request.getRequestId(), ReceiveOrderResponse.class);
+        if (previous.isPresent()) return previous.get();
+
         log.info("开始收衣, 客户={}, 件数={}, 操作员={}", request.getCustomerPhone(),
                 request.getItems().size(), operatorName);
+
+        if (request.getPaymentMethod() == null || !java.util.Set.of("CASH", "WECHAT", "ALIPAY", "MEMBER_CARD", "MIXED")
+                .contains(request.getPaymentMethod())) {
+            throw new IllegalArgumentException("支付方式不正确");
+        }
+        if (Integer.valueOf(1).equals(request.getNewCardFlag())) validateOfflinePayment(request.getNewCardPayMethod());
+        if (Integer.valueOf(1).equals(request.getRechargeFlag())) validateOfflinePayment(request.getRechargePayMethod());
 
         LocalDateTime now = LocalDateTime.now();
         String today = DATE_FMT.format(LocalDate.now());
@@ -102,9 +115,10 @@ public class OrderServiceImpl implements OrderService {
             if (existed != null) {
                 // 已有卡 → 自动转为充值模式，不创建新卡
                 log.info("客户已有卡 cardNo={}, 办卡自动转为充值模式", existed.getCardNo());
-                memberCard = existed;
+                memberCard = cardMapper.selectForUpdate(existed.getId());
                 // 把 newCardAmount 转为 rechargeAmount（走 Step 2.5 的充值逻辑）
-                BigDecimal newAmt = cardTypeMapper.selectById(request.getNewCardTypeId()).getAmount();
+                MemberCardType selectedType = cardTypeMapper.selectById(request.getNewCardTypeId());
+                if (selectedType == null || selectedType.getStatus() != 1) throw new IllegalArgumentException("卡类型不存在或已停用");
                 request.setRechargeFlag(1);
                 request.setRechargeCardTypeId(request.getNewCardTypeId());
                 request.setRechargePayMethod(request.getNewCardPayMethod());
@@ -116,22 +130,20 @@ public class OrderServiceImpl implements OrderService {
             } else {
                 // 无卡 → 正常办卡
                 memberCard = doCreateNewCard(customer, request.getNewCardTypeId(), request.getNewCardPayMethod(),
-                        storeCode, operatorId, operatorName, now);
+                        storeCode, operatorId, operatorName, now, request.getRequestId());
                 newCardAmount = cardTypeMapper.selectById(request.getNewCardTypeId()).getAmount();
                 newCardTypeId = request.getNewCardTypeId();
             }
             request.setMemberCardId(memberCard.getId());
         } else if (request.getMemberCardId() != null) {
             // 已有会员卡
-            memberCard = cardMapper.selectById(request.getMemberCardId());
+            memberCard = cardMapper.selectForUpdate(request.getMemberCardId());
             if (memberCard == null || memberCard.getStatus() != 1) {
                 throw new RuntimeException("会员卡不存在或已停用");
             }
             // 安全校验：该卡的客户必须与当前客户一致，防止串卡
             if (memberCard.getCustomerId() != null && !memberCard.getCustomerId().equals(customer.getId())) {
-                memberCard = null;
-                request.setMemberCardId(null);
-                log.warn("会员卡 customerId 与当前客户不一致，已忽略 cardId={}", request.getMemberCardId());
+                throw new IllegalArgumentException("会员卡不属于当前客户");
             }
         }
 
@@ -182,13 +194,31 @@ public class OrderServiceImpl implements OrderService {
         }
 
         List<ItemCalcResult> calcResults = new ArrayList<>();
+        boolean hasPriceOverride = false;
         for (ReceiveOrderItemRequest req : itemReqs) {
-            ItemCalcResult r = calcItemPrice(req, memberCard);
-            calcResults.add(r);
-            totalCount += (req.getQuantity() != null ? req.getQuantity() : 1);
-            totalAmount = totalAmount.add(r.unitPrice.multiply(BigDecimal.valueOf(req.getQuantity() != null ? req.getQuantity() : 1)));
-            actualAmount = actualAmount.add(r.subtotal);
+            int qty = req.getQuantity() == null ? 1 : req.getQuantity();
+            if (qty < 1 || totalCount + qty > 99) throw new IllegalArgumentException("单个订单衣物总数必须在1至99件之间");
+            ClothesCategory category = categoryMapper.selectById(req.getCategoryId());
+            if (category == null || category.getStatus() == null || category.getStatus() != 1)
+                throw new IllegalArgumentException("衣物类别不存在或已停用");
+            if (category.getPrice() == null || category.getPrice().compareTo(BigDecimal.ZERO) < 0)
+                throw new IllegalArgumentException("衣物类别价格配置不正确");
+            BigDecimal catalogPrice = category.getPrice().setScale(2, RoundingMode.HALF_UP);
+            BigDecimal requestedPrice = req.getUnitPrice() == null ? catalogPrice : req.getUnitPrice().setScale(2, RoundingMode.HALF_UP);
+            if (requestedPrice.compareTo(BigDecimal.ZERO) < 0) throw new IllegalArgumentException("衣物单价不能为负数");
+            boolean overridden = requestedPrice.compareTo(catalogPrice) != 0;
+            if (overridden && !admin) throw new org.springframework.security.access.AccessDeniedException("仅管理员可以修改衣物单价");
+            hasPriceOverride |= overridden;
+            for (int piece = 0; piece < qty; piece++) {
+                ItemCalcResult r = calcItemPrice(req, category, memberCard, overridden ? requestedPrice : catalogPrice);
+                calcResults.add(r);
+                totalCount++;
+                totalAmount = totalAmount.add(r.unitPrice);
+                actualAmount = actualAmount.add(r.subtotal);
+            }
         }
+        if (hasPriceOverride && (request.getPriceOverrideReason() == null || request.getPriceOverrideReason().isBlank()))
+            throw new IllegalArgumentException("管理员改价必须填写原因");
         BigDecimal discountAmount = totalAmount.subtract(actualAmount); // 优惠金额
 
         // ========== Step 3.5: 加急加价（urgentFlag=1 时整体加价20%） ==========
@@ -213,6 +243,11 @@ public class OrderServiceImpl implements OrderService {
         String extraMethod = request.getExtraMethod();
 
         boolean useCardForPay = "MEMBER_CARD".equals(paymentMethod) || "MIXED".equals(paymentMethod);
+        if (useCardForPay && memberCard == null) throw new IllegalArgumentException("会员卡支付必须选择有效会员卡");
+        if ("MIXED".equals(paymentMethod) && extraMethod != null
+                && !java.util.Set.of("CASH", "WECHAT", "ALIPAY").contains(extraMethod)) {
+            throw new IllegalArgumentException("组合支付补差方式不正确");
+        }
 
         if (useCardForPay && memberCard != null && memberCard.getBalance().compareTo(BigDecimal.ZERO) > 0) {
             // === 前端选择卡扣款 + 有卡且有余额 → 自动卡扣 ===
@@ -259,10 +294,18 @@ public class OrderServiceImpl implements OrderService {
         } else {
             totalReceivable = payableAmount.add(cardInflow);
         }
-        BigDecimal totalPaid = request.getTotalPaid() != null ? request.getTotalPaid() : totalReceivable;
+        BigDecimal totalPaid = (request.getTotalPaid() != null ? request.getTotalPaid() : totalReceivable)
+                .setScale(2, RoundingMode.HALF_UP);
+        if (totalPaid.compareTo(BigDecimal.ZERO) < 0 || totalPaid.compareTo(totalReceivable) > 0) {
+            throw new IllegalArgumentException("实收金额必须在0和应收金额之间");
+        }
+        if (totalPaid.compareTo(cardInflow) < 0) {
+            throw new IllegalArgumentException("办卡或充值金额必须足额收款");
+        }
         BigDecimal debtAmount = totalReceivable.subtract(totalPaid);
 
         LaundryOrder order = new LaundryOrder();
+        order.setRequestId(request.getRequestId());
         order.setOrderNo(orderNo);
         order.setCustomerId(customer.getId());
         order.setCustomerName(customer.getName());
@@ -319,7 +362,6 @@ public class OrderServiceImpl implements OrderService {
         int itemSeq = 1;
         for (ItemCalcResult cr : calcResults) {
             ReceiveOrderItemRequest req = cr.req;
-            int qty = req.getQuantity() != null ? req.getQuantity() : 1;
             String barcode = storeCode + mmdd + String.format("%03d", orderSeq) + String.format("%02d", itemSeq);
 
             OrderItem item = new OrderItem();
@@ -330,8 +372,8 @@ public class OrderServiceImpl implements OrderService {
             item.setCategoryId(cr.category.getId());
             item.setCategoryGroup(cr.category.getCategoryGroup());
             item.setCategoryName(buildCategoryLabel(cr.category));
-            item.setQuantity(qty);
-            item.setUnitPrice(req.getUnitPrice());
+            item.setQuantity(1);
+            item.setUnitPrice(cr.unitPrice);
             item.setMemberPrice(cr.memberPrice);
             item.setSubtotal(cr.subtotal);
             item.setColor(req.getColor());
@@ -355,8 +397,8 @@ public class OrderServiceImpl implements OrderService {
             ir.setBarcodeImageBase64(BarcodeUtil.generateCode128SvgDataUri(barcode));
             ir.setCategoryName(item.getCategoryName());
             ir.setCategoryGroup(cr.category.getCategoryGroup());
-            ir.setQuantity(qty);
-            ir.setUnitPrice(req.getUnitPrice());
+            ir.setQuantity(1);
+            ir.setUnitPrice(cr.unitPrice);
             ir.setMemberPrice(cr.memberPrice);
             ir.setSubtotal(cr.subtotal);
             ir.setColor(req.getColor());
@@ -399,6 +441,7 @@ public class OrderServiceImpl implements OrderService {
 
             // 写消费记录
             MemberCardConsume consume = new MemberCardConsume();
+            consume.setRequestId(request.getRequestId() + ":consume");
             consume.setCardId(updatedCard.getId());
             consume.setCardNo(updatedCard.getCardNo());
             consume.setCustomerId(customer.getId());
@@ -446,6 +489,7 @@ public class OrderServiceImpl implements OrderService {
         // ========== Step 9.5: 充值记录（rechargeFlag=1，已有卡追加充值） ==========
         if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0 && memberCard != null) {
             MemberCardRecharge rc = new MemberCardRecharge();
+            rc.setRequestId(request.getRequestId() + ":recharge");
             rc.setCardId(memberCard.getId());
             rc.setCardNo(memberCard.getCardNo());
             rc.setCustomerId(customer.getId());
@@ -480,6 +524,11 @@ public class OrderServiceImpl implements OrderService {
                 "收衣成功，订单号 " + orderNo + "，衣物 " + totalCount + " 件，应收 ¥"
                         + totalReceivable.toPlainString() + "，实收 ¥" + totalPaid.toPlainString(),
                 null, "RECEIVED", actualAmount, operatorId, operatorName, now, request.getRemark());
+        if (hasPriceOverride) {
+            writeOperateLog(order.getId(), orderNo, null, null, "PRICE_OVERRIDE",
+                    "管理员修改衣物单价", null, "RECEIVED", null,
+                    operatorId, operatorName, now, request.getPriceOverrideReason().trim());
+        }
 
         // ========== Step 12: 短信日志（预留，待接入阿里云）==========
         if (memberCard != null && cardDeduct.compareTo(BigDecimal.ZERO) > 0) {
@@ -549,32 +598,28 @@ public class OrderServiceImpl implements OrderService {
         log.info("收衣完成 orderNo={}, totalCount={}, totalReceivable={}",
                 orderNo, totalCount, totalReceivable);
 
-        // ========== Step 14: 异步发送标签打印任务（RabbitMQ）==========
-        try {
-            PrintTaskMessage printTask = new PrintTaskMessage();
-            printTask.setOrderNo(orderNo);
-            printTask.setCustomerName(customer.getName());
-            printTask.setCustomerPhone(customer.getPhone());
-            printTask.setStoreCode(storeCode);
-            printTask.setStoreName(resp.getStoreName() != null ? resp.getStoreName() : "小木棒洗衣");
-            printTask.setCreateTime(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        // ========== Step 14: 与订单同事务写入Outbox，由后台可靠投递RabbitMQ ==========
+        PrintTaskMessage printTask = new PrintTaskMessage();
+        printTask.setOrderNo(orderNo);
+        printTask.setCustomerName(customer.getName());
+        printTask.setCustomerPhone(customer.getPhone());
+        printTask.setStoreCode(storeCode);
+        printTask.setStoreName(resp.getStoreName() != null ? resp.getStoreName() : "小木棒洗衣");
+        printTask.setCreateTime(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
-            List<PrintTaskMessage.ItemPrintInfo> printItems = new ArrayList<>();
-            for (ReceiveOrderItemResponse ir : itemResps) {
-                PrintTaskMessage.ItemPrintInfo pi = new PrintTaskMessage.ItemPrintInfo();
-                pi.setBarcode(ir.getBarcode());
-                pi.setCategoryName(ir.getCategoryName());
-                pi.setQuantity(ir.getQuantity());
-                pi.setColor(ir.getColor());
-                printItems.add(pi);
-            }
-            printTask.setItems(printItems);
-
-            printTaskProducer.sendPrintTask(printTask);
-        } catch (Exception e) {
-            log.warn("标签打印任务发送失败，不影响主流程 orderNo={}", orderNo, e);
+        List<PrintTaskMessage.ItemPrintInfo> printItems = new ArrayList<>();
+        for (ReceiveOrderItemResponse ir : itemResps) {
+            PrintTaskMessage.ItemPrintInfo pi = new PrintTaskMessage.ItemPrintInfo();
+            pi.setBarcode(ir.getBarcode());
+            pi.setCategoryName(ir.getCategoryName());
+            pi.setQuantity(ir.getQuantity());
+            pi.setColor(ir.getColor());
+            printItems.add(pi);
         }
+        printTask.setItems(printItems);
+        printTaskProducer.enqueuePrintTask(printTask);
 
+        idempotencyService.complete(idempotencyScope, request.getRequestId(), resp);
         return resp;
     }
 
@@ -602,6 +647,7 @@ public class OrderServiceImpl implements OrderService {
             customerMapper.insert(c);
             log.info("收衣新增客户 id={}, name={}", c.getId(), c.getName());
         } else {
+            c = customerMapper.selectForUpdate(c.getId());
             // 更新为最新信息
             boolean changed = false;
             if (req.getCustomerName() != null && !req.getCustomerName().isBlank()
@@ -628,7 +674,8 @@ public class OrderServiceImpl implements OrderService {
     /** 办新卡（返回新会员卡） */
     private MemberCard doCreateNewCard(Customer customer, Long cardTypeId, String payMethod,
                                        String storeCode, Long operatorId, String operatorName,
-                                       LocalDateTime now) {
+                                       LocalDateTime now, String requestId) {
+        customerMapper.selectForUpdate(customer.getId());
         // 一人一卡校验
         LambdaQueryWrapper<MemberCard> existQw = new LambdaQueryWrapper<>();
         existQw.eq(MemberCard::getCustomerId, customer.getId())
@@ -666,6 +713,7 @@ public class OrderServiceImpl implements OrderService {
 
         // 充值记录（order_no稍后订单创建好后回写）
         MemberCardRecharge rc = new MemberCardRecharge();
+        rc.setRequestId(requestId + ":new-card");
         rc.setCardId(card.getId());
         rc.setCardNo(cardNo);
         rc.setCustomerId(customer.getId());
@@ -686,12 +734,8 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /** 衣物价格计算：按会员卡价格模式 */
-    private ItemCalcResult calcItemPrice(ReceiveOrderItemRequest req, MemberCard card) {
-        ClothesCategory cat = categoryMapper.selectById(req.getCategoryId());
-        if (cat == null) throw new RuntimeException("衣物类别不存在 id=" + req.getCategoryId());
-        int qty = req.getQuantity() != null ? req.getQuantity() : 1;
-        BigDecimal unitPrice = req.getUnitPrice();  // 前端传的（已带出后可手动修改）
-
+    private ItemCalcResult calcItemPrice(ReceiveOrderItemRequest req, ClothesCategory cat,
+                                         MemberCard card, BigDecimal unitPrice) {
         BigDecimal memberPrice;
         if (card == null) {
             // 无会员卡：会员价字段 = 原价
@@ -708,7 +752,7 @@ public class OrderServiceImpl implements OrderService {
                 memberPrice = cat.getMemberPrice500() != null ? cat.getMemberPrice500() : unitPrice;
             }
         }
-        BigDecimal subtotal = memberPrice.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal subtotal = memberPrice.setScale(2, RoundingMode.HALF_UP);
         return new ItemCalcResult(req, cat, unitPrice, memberPrice, subtotal);
     }
 
@@ -768,6 +812,12 @@ public class OrderServiceImpl implements OrderService {
             case "MIXED" -> "组合支付";
             default -> method;
         };
+    }
+
+    private void validateOfflinePayment(String method) {
+        if (method == null || !java.util.Set.of("CASH", "WECHAT", "ALIPAY").contains(method)) {
+            throw new IllegalArgumentException("收款方式不正确");
+        }
     }
 
     // =========================================================

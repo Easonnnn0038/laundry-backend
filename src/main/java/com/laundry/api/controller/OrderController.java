@@ -42,7 +42,8 @@ public class OrderController {
                 request,
                 currentUserUtil.getStoreCode(),
                 currentUserUtil.getOperatorId(),
-                currentUserUtil.getOperatorName());
+                currentUserUtil.getOperatorName(),
+                "ADMIN".equals(currentUserUtil.getUser().getRole()));
         return Result.success(resp);
     }
 

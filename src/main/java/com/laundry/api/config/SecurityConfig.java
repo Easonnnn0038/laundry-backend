@@ -66,8 +66,6 @@ public class SecurityConfig {
                         "/swagger-resources/**",
                         "/favicon.ico"
                 ).permitAll()
-                // 照片静态资源 - 无需认证
-                .requestMatchers("/photos/**").permitAll()
                 // 其他 /api/** 接口 - 需要认证
                 .requestMatchers("/api/**").authenticated()
                 // 其他请求 - 放行

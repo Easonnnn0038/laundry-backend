@@ -6,6 +6,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+
+import java.io.File;
+import java.util.concurrent.TimeUnit;
 
 import java.util.Map;
 
@@ -33,5 +40,16 @@ public class PhotoController {
     public Result<Void> delete(@RequestParam("filename") String filename) {
         photoService.deletePhoto(filename);
         return Result.success();
+    }
+
+    @GetMapping("/file/{date}/{filename:.+}")
+    public ResponseEntity<FileSystemResource> file(@PathVariable String date,
+                                                    @PathVariable String filename) {
+        File photo = photoService.getPhoto(date + "/" + filename);
+        MediaType type = filename.endsWith(".png") ? MediaType.IMAGE_PNG : MediaType.IMAGE_JPEG;
+        return ResponseEntity.ok()
+                .contentType(type)
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .body(new FileSystemResource(photo));
     }
 }

@@ -18,6 +18,8 @@ public class MemberCardRecharge {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private String requestId;
+
     /** 会员卡ID */
     private Long cardId;
 

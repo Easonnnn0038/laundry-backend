@@ -49,5 +49,5 @@ public interface MemberCardService {
      * @return 充值后的会员卡详情
      */
     MemberCardSimpleResponse recharge(MemberCardRechargeRequest request,
-                                       Long operatorId, String operatorName);
+                                       Long operatorId, String operatorName, boolean admin);
 }

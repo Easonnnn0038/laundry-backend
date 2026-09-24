@@ -6,6 +6,9 @@ import com.laundry.api.dto.response.LoginResponse;
 import com.laundry.api.entity.User;
 import com.laundry.api.service.AuthService;
 import com.laundry.api.utils.CurrentUserUtil;
+import com.laundry.api.security.LoginAttemptLimiter;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.AuthenticationException;
 
 /**
  * 认证控制器
@@ -31,6 +35,9 @@ public class AuthController {
     @Autowired
     private CurrentUserUtil currentUserUtil;
 
+    @Autowired
+    private LoginAttemptLimiter loginLimiter;
+
     /**
      * 用户登录
      *
@@ -39,9 +46,22 @@ public class AuthController {
      */
     @Operation(summary = "用户登录", description = "通过用户名和密码登录，返回JWT令牌")
     @PostMapping("/login")
-    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        LoginResponse response = authService.login(request);
-        return Result.success(response);
+    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                       HttpServletRequest httpRequest,
+                                       HttpServletResponse httpResponse) {
+        String ip = clientIp(httpRequest);
+        if (loginLimiter.blocked(ip, request.getUsername())) {
+            httpResponse.setStatus(429);
+            return Result.error(429, "登录失败次数过多，请15分钟后重试");
+        }
+        try {
+            LoginResponse response = authService.login(request);
+            loginLimiter.succeeded(ip, request.getUsername());
+            return Result.success(response);
+        } catch (AuthenticationException e) {
+            loginLimiter.failed(ip, request.getUsername());
+            throw e;
+        }
     }
 
     /**
@@ -60,5 +80,9 @@ public class AuthController {
         resp.setUsername(user.getUsername());
         resp.setRealName(user.getRealName());
         return Result.success(resp);
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        return request.getRemoteAddr();
     }
 }

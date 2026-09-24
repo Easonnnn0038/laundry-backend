@@ -2,6 +2,8 @@ package com.laundry.api.dto.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -13,13 +15,19 @@ import java.math.BigDecimal;
 @Schema(description = "会员卡办理请求")
 public class MemberCardCreateRequest {
 
+    @NotBlank(message = "请求号不能为空")
+    @Pattern(regexp = "^[A-Za-z0-9_-]{16,64}$", message = "请求号格式不正确")
+    private String requestId;
+
     @Schema(description = "客户ID（已有客户传入）")
     private Long customerId;
 
     @Schema(description = "客户姓名（新客户必填）", required = true, example = "李女士")
+    @NotBlank(message = "客户姓名不能为空")
     private String customerName;
 
     @Schema(description = "客户电话（必填）", required = true, example = "13999507012")
+    @NotBlank(message = "客户电话不能为空")
     private String customerPhone;
 
     @Schema(description = "客户地址（选填）")
@@ -30,6 +38,7 @@ public class MemberCardCreateRequest {
     private Long cardTypeId;
 
     @Schema(description = "充值支付方式：CASH/WECHAT/ALIPAY", required = true, example = "CASH")
+    @NotBlank(message = "支付方式不能为空")
     private String paymentMethod;
 
     @Schema(description = "备注")

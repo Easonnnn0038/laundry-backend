@@ -9,6 +9,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import java.util.Iterator;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -36,6 +40,8 @@ public class PhotoService {
      * 在 Bean 初始化时基于 user.dir（启动时的工作目录）解析一次，避免运行期相对路径解析漂移。
      */
     private File resolvedRootDir;
+    private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
+    private static final long MAX_PIXELS = 40_000_000L;
 
     @PostConstruct
     public void init() {
@@ -62,6 +68,37 @@ public class PhotoService {
             throw new RuntimeException("照片文件为空");
         }
 
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException("照片不能超过10MB");
+        }
+
+        String contentType = file.getContentType();
+        if (!"image/jpeg".equals(contentType) && !"image/png".equals(contentType)) {
+            throw new IllegalArgumentException("仅支持 JPG 和 PNG 图片");
+        }
+
+        String ext;
+        try (ImageInputStream input = ImageIO.createImageInputStream(file.getInputStream())) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) throw new IllegalArgumentException("文件不是有效图片");
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                String format = reader.getFormatName().toLowerCase();
+                if (format.equals("jpg") || format.equals("jpeg")) ext = ".jpg";
+                else if (format.equals("png")) ext = ".png";
+                else throw new IllegalArgumentException("仅支持 JPG 和 PNG 图片");
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                if ((long) width * height > MAX_PIXELS) throw new IllegalArgumentException("图片尺寸过大");
+                reader.read(0);
+            } finally {
+                reader.dispose();
+            }
+        } catch (IOException e) {
+            throw new IllegalArgumentException("无法读取图片文件");
+        }
+
         // 按日期分目录：uploads/photos/20260812/xxx.jpg
         String dateDir = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         File dir = new File(resolvedRootDir, dateDir);
@@ -70,11 +107,6 @@ public class PhotoService {
         }
 
         // 生成唯一文件名
-        String originalName = file.getOriginalFilename();
-        String ext = ".jpg";
-        if (originalName != null && originalName.contains(".")) {
-            ext = originalName.substring(originalName.lastIndexOf("."));
-        }
         String filename = UUID.randomUUID().toString().replace("-", "") + ext;
 
         // 保存文件
@@ -96,20 +128,35 @@ public class PhotoService {
         return result;
     }
 
+    public File getPhoto(String filename) {
+        validateFilename(filename);
+        try {
+            File file = new File(resolvedRootDir, filename).getCanonicalFile();
+            if (!file.toPath().startsWith(resolvedRootDir.getCanonicalFile().toPath()) || !file.isFile()) {
+                throw new IllegalArgumentException("照片不存在");
+            }
+            return file;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("照片路径无效");
+        }
+    }
+
     /**
      * 删除磁盘上的照片
      */
     public void deletePhoto(String filename) {
         if (filename == null || filename.isEmpty()) return;
-        // 防止路径穿越
-        if (filename.contains("..") || (filename.contains("/") && !filename.matches("^\\d{8}/[a-f0-9\\-]+\\.(jpg|jpeg|png|gif|webp)$"))) {
-            throw new RuntimeException("非法文件名");
-        }
-        File file = new File(resolvedRootDir, filename);
+        File file = getPhoto(filename);
         if (file.exists()) {
             if (!file.delete()) {
                 log.warn("删除照片失败: {}", file.getAbsolutePath());
             }
+        }
+    }
+
+    private void validateFilename(String filename) {
+        if (filename == null || !filename.matches("^\\d{8}/[a-f0-9]{32}\\.(jpg|png)$")) {
+            throw new IllegalArgumentException("非法文件名");
         }
     }
 }

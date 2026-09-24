@@ -34,7 +34,7 @@ public interface OrderService {
      * @return 收衣成功响应（含打印预览所有数据）
      */
     ReceiveOrderResponse receiveOrder(ReceiveOrderRequest request, String storeCode,
-                                      Long operatorId, String operatorName);
+                                      Long operatorId, String operatorName, boolean admin);
 
     /**
      * 查询暂存订单列表

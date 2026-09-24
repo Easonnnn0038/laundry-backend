@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -17,6 +18,13 @@ import java.util.List;
 @Data
 @Schema(description = "提交收衣订单请求")
 public class ReceiveOrderRequest {
+
+    @NotBlank(message = "请求号不能为空")
+    @Pattern(regexp = "^[A-Za-z0-9_-]{16,64}$", message = "请求号格式不正确")
+    private String requestId;
+
+    @Schema(description = "管理员改价原因；任一衣物价格偏离价目表时必填")
+    private String priceOverrideReason;
 
     // ========== 客户信息 ==========
     @Schema(description = "客户ID（已有客户时传入；新客户不传）", example = "1")

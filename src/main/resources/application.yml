@@ -30,12 +30,24 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:guest}
     password: ${RABBITMQ_PASSWORD:guest}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
     listener:
       simple:
+        auto-startup: ${RABBITMQ_LISTENER_ENABLED:false}
+        acknowledge-mode: manual
+        default-requeue-rejected: false
         retry:
-          enabled: true
-          max-attempts: 3
-          initial-interval: 2000ms
+          enabled: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 7
+    baseline-description: pre-flyway-production-schema
+    validate-on-migrate: true
 
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
@@ -55,7 +67,6 @@ mybatis-plus:
   type-aliases-package: com.laundry.api.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     banner: false
     db-config:
@@ -88,5 +99,19 @@ springdoc:
 
 logging:
   level:
-    com.laundry.api: debug
+    com.laundry.api: info
     org.springframework.security: info
+
+app:
+  seed-default-users: false
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,null}
+  login:
+    max-failures: 5
+    window-minutes: 15
+    block-minutes: 15
+  rabbitmq:
+    outbox-poll-ms: ${RABBITMQ_OUTBOX_POLL_MS:2000}
+    max-publish-attempts: ${RABBITMQ_MAX_PUBLISH_ATTEMPTS:8}
+    consumer-max-attempts: ${RABBITMQ_CONSUMER_MAX_ATTEMPTS:3}
+    consumer-retry-interval-ms: ${RABBITMQ_CONSUMER_RETRY_INTERVAL_MS:2000}

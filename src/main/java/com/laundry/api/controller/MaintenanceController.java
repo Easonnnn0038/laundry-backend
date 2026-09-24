@@ -13,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.management.ManagementFactory;
 import java.net.InetSocketAddress;
@@ -72,6 +73,31 @@ public class MaintenanceController {
         HttpHeaders h=new HttpHeaders();h.setContentType(new MediaType("text","csv",StandardCharsets.UTF_8));h.setContentDisposition(ContentDisposition.attachment().filename("maintenance-events-"+LocalDate.now()+".csv").build());return ResponseEntity.ok().headers(h).body(csv.toString().getBytes(StandardCharsets.UTF_8));}
 
     @PostMapping("/client-error") public Result<Void> clientError(@Valid @RequestBody ClientErrorRequest req){logs.recordClient(req.module()==null?"门店前端":req.module(),req.message(),req.path(),req.clientVersion());return Result.success();}
+
+    @GetMapping("/mq/outbox") public Result<List<Map<String,Object>>> outbox(@RequestParam(required=false) String status){admin();
+        String normalized=status==null?"":status.trim().toUpperCase();if(!normalized.isEmpty()&&!List.of("PENDING","PUBLISHING","RETRY","SENT","DEAD").contains(normalized))throw new IllegalArgumentException("无效消息状态");
+        return Result.success(jdbc.queryForList("""
+          SELECT o.id,o.event_id AS eventId,o.event_type AS eventType,o.aggregate_id AS aggregateId,
+            o.status,o.attempt_count AS attemptCount,o.next_attempt_time AS nextAttemptTime,
+            o.sent_time AS sentTime,o.last_error AS lastError,o.create_time AS createTime,
+            c.status AS consumeStatus,c.processed_time AS processedTime,c.last_error AS consumeError
+          FROM mq_outbox o LEFT JOIN mq_consumed_event c
+            ON c.consumer_name='PRINT_TASK_CONSUMER' AND c.event_id=o.event_id
+          WHERE o.store_code=? AND (?='' OR o.status=?) ORDER BY o.id DESC LIMIT 200
+          """,user.getStoreCode(),normalized,normalized));}
+
+    @PostMapping("/mq/outbox/{id}/retry") @Transactional
+    public Result<Map<String,Object>> retryMessage(@PathVariable long id){admin();
+        List<Map<String,Object>> rows=jdbc.queryForList("""
+          SELECT o.event_id,o.status,c.status AS consume_status FROM mq_outbox o
+          LEFT JOIN mq_consumed_event c ON c.consumer_name='PRINT_TASK_CONSUMER' AND c.event_id=o.event_id
+          WHERE o.id=? AND o.store_code=? FOR UPDATE
+          """,id,user.getStoreCode());
+        if(rows.size()!=1)throw new IllegalArgumentException("消息不存在");Map<String,Object> row=rows.get(0);
+        if(!"DEAD".equals(row.get("status"))&&!"DEAD".equals(row.get("consume_status")))throw new IllegalArgumentException("只有投递失败或消费失败的消息可以重试");
+        jdbc.update("DELETE FROM mq_consumed_event WHERE consumer_name='PRINT_TASK_CONSUMER' AND event_id=?",row.get("event_id"));
+        jdbc.update("UPDATE mq_outbox SET status='RETRY',attempt_count=0,next_attempt_time=?,sent_time=NULL,last_error=NULL,update_time=? WHERE id=?",LocalDateTime.now(),LocalDateTime.now(),id);
+        return Result.success(Map.of("id",id,"status","RETRY"));}
 
     private List<Map<String,Object>> findEvents(String category,String status,LocalDate from,LocalDate to){StringBuilder sql=new StringBuilder("""
       SELECT id,category,level,module,message,error_class AS errorClass,request_method AS requestMethod,

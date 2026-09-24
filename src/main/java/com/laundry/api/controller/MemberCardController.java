@@ -66,6 +66,7 @@ public class MemberCardController {
         return Result.success(memberCardService.recharge(
                 request,
                 currentUserUtil.getOperatorId(),
-                currentUserUtil.getOperatorName()));
+                currentUserUtil.getOperatorName(),
+                "ADMIN".equals(currentUserUtil.getUser().getRole())));
     }
 }
