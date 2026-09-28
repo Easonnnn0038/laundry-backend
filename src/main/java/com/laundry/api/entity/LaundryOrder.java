@@ -20,6 +20,14 @@ public class LaundryOrder {
 
     private String requestId;
 
+    /** NORMAL普通订单 / REWASH返洗订单 */
+    private String orderType;
+
+    /** 返洗来源订单 */
+    private Long sourceOrderId;
+    private String sourceOrderNo;
+    private String rewashReason;
+
     /** 订单编号：门店3位+日期8位YYYYMMDD+当日流水3位，共14位 */
     private String orderNo;
 

@@ -13,9 +13,15 @@ import java.math.BigDecimal;
 @Schema(description = "收衣物明细项请求")
 public class ReceiveOrderItemRequest {
 
+    @Schema(description = "返洗来源衣物ID；普通收衣不传")
+    private Long sourceOrderItemId;
+
     @Schema(description = "衣物类别ID（clothes_category表主键）", required = true, example = "1")
     @NotNull(message = "衣物类别不能为空")
     private Long categoryId;
+
+    @Schema(description = "自定义衣物名称；选择自定义类别时必填")
+    private String customName;
 
     @Schema(description = "数量（默认1件，一件一条码）", example = "1")
     private Integer quantity = 1;

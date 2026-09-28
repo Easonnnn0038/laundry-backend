@@ -64,6 +64,49 @@ public class ShelfService {
         return Map.of("barcode",barcode,"shelfNo",shelfNo,"status","OCCUPIED");
     }
 
+    /** 回店扫码时直接占用货架，省去“分配后再确认”的第二次操作。 */
+    @Transactional
+    public Map<String,Object> occupyOnReturn(long orderItemId,String store,Long operatorId,String operatorName){
+        Map<String,Object> item=item(orderItemId,store,true);
+        int shelfStatus=((Number)item.get("shelf_status")).intValue();
+        if(shelfStatus==1){
+            Integer existing=parseShelf(item.get("shelf_code"));
+            Integer occupied=existing==null?0:jdbc.queryForObject("""
+                SELECT COUNT(*) FROM shelf_position
+                WHERE store_code=? AND shelf_no=? AND order_item_id=? AND status='OCCUPIED'
+                """,Integer.class,store,existing,orderItemId);
+            if(existing==null||occupied==null||occupied!=1)throw new IllegalArgumentException("衣物上架记录不一致，请联系管理员处理");
+            return Map.of("barcode",item.get("barcode"),"shelfNo",existing,"status","OCCUPIED","reused",true);
+        }
+        jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND status='RESERVED' AND reserved_until<?",store,LocalDateTime.now());
+        int max=max(store);
+        Set<Integer> unavailable=new HashSet<>(jdbc.query("SELECT shelf_no FROM shelf_position WHERE store_code=?",(rs,n)->rs.getInt(1),store));
+        List<Integer> sameOrder=jdbc.query("""
+            SELECT shelf_no FROM shelf_position
+            WHERE store_code=? AND order_id=? AND status='OCCUPIED' ORDER BY shelf_no
+            """,(rs,n)->rs.getInt(1),store,item.get("order_id"));
+        int remaining=jdbc.queryForObject("SELECT COUNT(*) FROM order_item WHERE order_id=? AND shelf_status<>1",Integer.class,item.get("order_id"));
+        Integer chosen=chooseShelf(max,unavailable,sameOrder,remaining,ThreadLocalRandom.current().nextInt(Math.max(1,max)));
+        if(chosen==null)throw new IllegalArgumentException("当前货架已满，请先释放位置或由管理员扩大容量");
+        LocalDateTime now=LocalDateTime.now();
+        try{
+            jdbc.update("""
+                INSERT INTO shelf_position(store_code,shelf_no,status,order_item_id,barcode,order_id,
+                  operator_id,operator_name,update_time) VALUES (?,?,'OCCUPIED',?,?,?,?,?,?)
+                """,store,chosen,item.get("id"),item.get("barcode"),item.get("order_id"),operatorId,operatorName,now);
+        }catch(DuplicateKeyException e){throw new IllegalArgumentException("该位置刚被其他店员占用，请重新扫描");}
+        int changed=jdbc.update("""
+            UPDATE order_item SET shelf_status=1,shelf_code=?,on_shelf_time=?,off_shelf_time=NULL,update_time=?
+            WHERE id=? AND shelf_status<>1
+            """,String.valueOf(chosen),now,now,item.get("id"));
+        if(changed!=1)throw new IllegalArgumentException("衣物状态已变化，请重新扫描");
+        jdbc.update("""
+            INSERT INTO shelf_operation_log(store_code,order_id,order_item_id,order_no,barcode,action,
+              to_shelf_no,operator_id,operator_name,operate_time) VALUES (?,?,?,?,?,'SHELF',?,?,?,?)
+            """,store,item.get("order_id"),item.get("id"),item.get("order_no"),item.get("barcode"),chosen,operatorId,operatorName,now);
+        return Map.of("barcode",item.get("barcode"),"shelfNo",chosen,"status","OCCUPIED","reused",false);
+    }
+
     public List<Map<String,Object>> search(String keyword,String store){String t=keyword==null?"":keyword.trim();if(t.isEmpty())throw new IllegalArgumentException("请输入衣物码、订单号、手机号或货架号");Integer no=t.matches("\\d{1,4}")?Integer.valueOf(t):null;
         return jdbc.queryForList("""
           SELECT i.id,i.barcode,i.category_name AS categoryName,o.order_no AS orderNo,o.customer_phone AS phone,
@@ -89,6 +132,9 @@ public class ShelfService {
     private Map<String,Object> item(String barcode,String store,boolean lock){List<Map<String,Object>> rows=jdbc.queryForList("""
       SELECT i.*,o.store_code FROM order_item i JOIN laundry_order o ON o.id=i.order_id WHERE i.barcode=? AND o.store_code=?
       """+(lock?" FOR UPDATE":""),barcode.trim(),store);if(rows.size()!=1)throw new IllegalArgumentException("衣物码不存在或不属于当前门店");return rows.get(0);}
+    private Map<String,Object> item(long id,String store,boolean lock){List<Map<String,Object>> rows=jdbc.queryForList("""
+      SELECT i.*,o.store_code FROM order_item i JOIN laundry_order o ON o.id=i.order_id WHERE i.id=? AND o.store_code=?
+      """+(lock?" FOR UPDATE":""),id,store);if(rows.size()!=1)throw new IllegalArgumentException("衣物不存在或不属于当前门店");return rows.get(0);}
     private void ensureConfig(String store,String operator){jdbc.update("INSERT IGNORE INTO shelf_config(store_code,max_shelf_no,update_operator,update_time) VALUES (?,1700,?,?)",store,operator,LocalDateTime.now());}
     private int max(String store){ensureConfig(store,"系统");return jdbc.queryForObject("SELECT max_shelf_no FROM shelf_config WHERE store_code=?",Integer.class,store);}
     private int count(String store,String status){return jdbc.queryForObject("SELECT COUNT(*) FROM shelf_position WHERE store_code=? AND status=?",Integer.class,store,status);}

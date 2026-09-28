@@ -63,10 +63,6 @@ public class FactoryDispatchService {
                 throw new IllegalArgumentException("订单 " + order.get("order_no") + " 已不在待送厂状态");
             }
         }
-        if (orders.size() == 1 && ((Number) orders.get(0).get("urgent_flag")).intValue() != 1) {
-            throw new IllegalArgumentException("普通订单不能单独送厂，请至少选择两个订单；加急订单可单独送厂");
-        }
-
         LocalDateTime now = LocalDateTime.now();
         String today = LocalDate.now().format(DATE);
         seqCounterMapper.incrementSeq("FACTORY_BATCH:" + storeCode + ":" + today);
@@ -148,4 +144,3 @@ public class FactoryDispatchService {
         return result;
     }
 }
-

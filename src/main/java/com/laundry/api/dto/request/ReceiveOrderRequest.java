@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -23,8 +24,18 @@ public class ReceiveOrderRequest {
     @Pattern(regexp = "^[A-Za-z0-9_-]{16,64}$", message = "请求号格式不正确")
     private String requestId;
 
-    @Schema(description = "管理员改价原因；任一衣物价格偏离价目表时必填")
+    @Schema(description = "兼容旧客户端保留；管理员改价不再要求填写原因")
     private String priceOverrideReason;
+
+    @Schema(description = "返洗类型：CUSTOMER_RETURN客返 / STORE_RETURN店返")
+    private String rewashType;
+
+    @Schema(description = "返洗来源订单ID；普通收衣不传")
+    private Long sourceOrderId;
+
+    @Size(max = 500, message = "返洗原因不能超过500字")
+    @Schema(description = "返洗原因；返洗单必填")
+    private String rewashReason;
 
     // ========== 客户信息 ==========
     @Schema(description = "客户ID（已有客户时传入；新客户不传）", example = "1")

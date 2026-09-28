@@ -18,6 +18,14 @@ public class StagingDetailResponse {
     /** 订单编号 */
     private String orderNo;
 
+    private String orderType;
+
+    private Long sourceOrderId;
+
+    private String sourceOrderNo;
+
+    private String rewashReason;
+
     /** 收衣时间 */
     private LocalDateTime receiveTime;
 

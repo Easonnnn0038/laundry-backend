@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -25,7 +26,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 收衣订单服务实现（核心业务）
@@ -71,6 +76,7 @@ public class OrderServiceImpl implements OrderService {
     @Autowired private SeqCounterMapper seqCounterMapper;
     @Autowired private PrintTaskProducer printTaskProducer;
     @Autowired private IdempotencyService idempotencyService;
+    @Autowired private JdbcTemplate jdbc;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -79,6 +85,44 @@ public class OrderServiceImpl implements OrderService {
         String idempotencyScope = "RECEIVE_ORDER:" + storeCode;
         var previous = idempotencyService.begin(idempotencyScope, request.getRequestId(), ReceiveOrderResponse.class);
         if (previous.isPresent()) return previous.get();
+
+        boolean rewash = request.getSourceOrderId() != null;
+        String rewashType = rewash ? (request.getRewashType() == null ? "CUSTOMER_RETURN" : request.getRewashType().trim().toUpperCase()) : null;
+        if (rewash && !Set.of("CUSTOMER_RETURN","STORE_RETURN").contains(rewashType)) throw new IllegalArgumentException("返洗类型不正确");
+        boolean storeReturn = "STORE_RETURN".equals(rewashType);
+        LaundryOrder sourceOrder = null;
+        Map<Long, OrderItem> rewashSourceItems = new HashMap<>();
+        if (rewash) {
+            sourceOrder = orderMapper.selectOne(new LambdaQueryWrapper<LaundryOrder>()
+                    .eq(LaundryOrder::getId, request.getSourceOrderId()).last("FOR UPDATE"));
+            if (sourceOrder == null || !storeCode.equals(sourceOrder.getStoreCode()))
+                throw new IllegalArgumentException("返洗来源订单不存在");
+            if ((!storeReturn && !"PICKED_UP".equals(sourceOrder.getStatus()))
+                    || (storeReturn && !Set.of("BACK_TO_STORE","NOTIFIED").contains(sourceOrder.getStatus()))
+                    || !Integer.valueOf(0).equals(sourceOrder.getCancelFlag()))
+                throw new IllegalArgumentException(storeReturn ? "仅已回店且未取走的订单可以店返" : "仅已取衣订单可以客返");
+            if (request.getRewashReason() == null || request.getRewashReason().isBlank())
+                throw new IllegalArgumentException("请填写返洗原因");
+            if (!sourceOrder.getCustomerPhone().equals(request.getCustomerPhone().trim()))
+                throw new IllegalArgumentException("返洗客户与来源订单不一致");
+            Set<Long> selectedIds = new HashSet<>();
+            for (ReceiveOrderItemRequest item : request.getItems()) {
+                if (item.getSourceOrderItemId() == null || !selectedIds.add(item.getSourceOrderItemId()))
+                    throw new IllegalArgumentException("返洗衣物选择不正确");
+                OrderItem sourceItem = orderItemMapper.selectById(item.getSourceOrderItemId());
+                if (sourceItem == null || !sourceOrder.getId().equals(sourceItem.getOrderId())
+                        || !sourceItem.getCategoryId().equals(item.getCategoryId()))
+                    throw new IllegalArgumentException("返洗衣物不属于来源订单");
+                rewashSourceItems.put(sourceItem.getId(), sourceItem);
+            }
+            request.setNewCardFlag(0);
+            request.setRechargeFlag(0);
+            request.setMemberCardId(null);
+            request.setUrgentFlag(0);
+            request.setPaymentMethod("CASH");
+            request.setExtraMethod(null);
+            request.setTotalPaid(BigDecimal.ZERO);
+        }
 
         log.info("开始收衣, 客户={}, 件数={}, 操作员={}", request.getCustomerPhone(),
                 request.getItems().size(), operatorName);
@@ -201,6 +245,13 @@ public class OrderServiceImpl implements OrderService {
             ClothesCategory category = categoryMapper.selectById(req.getCategoryId());
             if (category == null || category.getStatus() == null || category.getStatus() != 1)
                 throw new IllegalArgumentException("衣物类别不存在或已停用");
+            if (rewash) {
+                if (qty != 1 || !rewashSourceItems.containsKey(req.getSourceOrderItemId()))
+                    throw new IllegalArgumentException("返洗衣物数量不正确");
+                calcResults.add(new ItemCalcResult(req, category, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+                totalCount++;
+                continue;
+            }
             if (category.getPrice() == null || category.getPrice().compareTo(BigDecimal.ZERO) < 0)
                 throw new IllegalArgumentException("衣物类别价格配置不正确");
             BigDecimal catalogPrice = category.getPrice().setScale(2, RoundingMode.HALF_UP);
@@ -217,8 +268,6 @@ public class OrderServiceImpl implements OrderService {
                 actualAmount = actualAmount.add(r.subtotal);
             }
         }
-        if (hasPriceOverride && (request.getPriceOverrideReason() == null || request.getPriceOverrideReason().isBlank()))
-            throw new IllegalArgumentException("管理员改价必须填写原因");
         BigDecimal discountAmount = totalAmount.subtract(actualAmount); // 优惠金额
 
         // ========== Step 3.5: 加急加价（urgentFlag=1 时整体加价20%） ==========
@@ -306,6 +355,12 @@ public class OrderServiceImpl implements OrderService {
 
         LaundryOrder order = new LaundryOrder();
         order.setRequestId(request.getRequestId());
+        order.setOrderType(rewash ? rewashType : "NORMAL");
+        if (rewash) {
+            order.setSourceOrderId(sourceOrder.getId());
+            order.setSourceOrderNo(sourceOrder.getOrderNo());
+            order.setRewashReason(request.getRewashReason().trim());
+        }
         order.setOrderNo(orderNo);
         order.setCustomerId(customer.getId());
         order.setCustomerName(customer.getName());
@@ -366,12 +421,17 @@ public class OrderServiceImpl implements OrderService {
 
             OrderItem item = new OrderItem();
             item.setOrderId(order.getId());
+            item.setSourceOrderItemId(req.getSourceOrderItemId());
             item.setOrderNo(orderNo);
             item.setItemSeq(itemSeq);
             item.setBarcode(barcode);
             item.setCategoryId(cr.category.getId());
             item.setCategoryGroup(cr.category.getCategoryGroup());
-            item.setCategoryName(buildCategoryLabel(cr.category));
+            String itemName = "CUSTOM".equals(cr.category.getCategoryGroup())
+                    ? requireCustomName(req.getCustomName()) : buildCategoryLabel(cr.category);
+            if ("CUSTOM".equals(cr.category.getCategoryGroup()) && !admin)
+                throw new org.springframework.security.access.AccessDeniedException("仅管理员可以添加自定义衣物和定价");
+            item.setCategoryName(itemName);
             item.setQuantity(1);
             item.setUnitPrice(cr.unitPrice);
             item.setMemberPrice(cr.memberPrice);
@@ -395,7 +455,7 @@ public class OrderServiceImpl implements OrderService {
             ir.setItemSeq(itemSeq);
             ir.setBarcode(barcode);
             ir.setBarcodeImageBase64(BarcodeUtil.generateCode128SvgDataUri(barcode));
-            ir.setCategoryName(item.getCategoryName());
+            ir.setCategoryName(itemName);
             ir.setCategoryGroup(cr.category.getCategoryGroup());
             ir.setQuantity(1);
             ir.setUnitPrice(cr.unitPrice);
@@ -409,6 +469,16 @@ public class OrderServiceImpl implements OrderService {
             ir.setShelfCode(null);
             itemResps.add(ir);
             itemSeq++;
+        }
+
+        if (storeReturn) {
+            LocalDateTime actionTime=LocalDateTime.now();
+            for (Long sourceItemId : rewashSourceItems.keySet()) {
+                jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND order_item_id=? AND status='OCCUPIED'",storeCode,sourceItemId);
+                jdbc.update("UPDATE order_item SET status='STORE_REWORKING',shelf_status=0,shelf_code=NULL,off_shelf_time=?,update_time=? WHERE id=?",actionTime,actionTime,sourceItemId);
+            }
+            jdbc.update("UPDATE laundry_order SET status='STORE_REWORKING',update_time=? WHERE id=?",actionTime,sourceOrder.getId());
+            createPendingNotification(sourceOrder,"STORE_RETURN_DELAY",storeCode,operatorId,operatorName,actionTime);
         }
 
         // ========== Step 8: 扣会员卡余额（cardDeduct>0时）==========
@@ -514,16 +584,25 @@ public class OrderServiceImpl implements OrderService {
         }
 
         // ========== Step 10: 更新客户累计 ==========
-        customer.setTotalCount(customer.getTotalCount() + totalCount);
-        customer.setTotalAmount(customer.getTotalAmount().add(payableAmount));
-        customer.setUpdateTime(now);
-        customerMapper.updateById(customer);
+        if (!rewash) {
+            customer.setTotalCount(customer.getTotalCount() + totalCount);
+            customer.setTotalAmount(customer.getTotalAmount().add(payableAmount));
+            customer.setUpdateTime(now);
+            customerMapper.updateById(customer);
+        }
 
         // ========== Step 11: 操作日志 RECEIVE ==========
-        writeOperateLog(order.getId(), orderNo, null, null, "RECEIVE",
-                "收衣成功，订单号 " + orderNo + "，衣物 " + totalCount + " 件，应收 ¥"
-                        + totalReceivable.toPlainString() + "，实收 ¥" + totalPaid.toPlainString(),
+        writeOperateLog(order.getId(), orderNo, null, null, rewash ? "REWASH" : "RECEIVE",
+                (rewash ? "返洗录入成功，来源订单 " + sourceOrder.getOrderNo() : "收衣成功，订单号 " + orderNo)
+                        + "，衣物 " + totalCount + " 件，应收 ¥" + totalReceivable.toPlainString()
+                        + "，实收 ¥" + totalPaid.toPlainString(),
                 null, "RECEIVED", actualAmount, operatorId, operatorName, now, request.getRemark());
+        if (rewash) {
+            writeOperateLog(sourceOrder.getId(), sourceOrder.getOrderNo(), null, null, "REWASH",
+                    "生成返洗订单 " + orderNo + "，共 " + totalCount + " 件",
+                    sourceOrder.getStatus(), sourceOrder.getStatus(), null,
+                    operatorId, operatorName, now, request.getRewashReason().trim());
+        }
         if (hasPriceOverride) {
             writeOperateLog(order.getId(), orderNo, null, null, "PRICE_OVERRIDE",
                     "管理员修改衣物单价", null, "RECEIVED", null,
@@ -541,8 +620,10 @@ public class OrderServiceImpl implements OrderService {
         }
         // 收衣通知
         writeSmsLog(customer.getPhone(),
-                String.format("【小木棒洗衣】尊敬的%s您送洗的%d件衣物已收衣，订单号%s，门店：金方世纪城民磬路108号",
-                        customer.getName(), totalCount, orderNo),
+                rewash
+                        ? String.format("【小木棒洗衣】您的%d件返洗衣物已登记，返洗订单号%s", totalCount, orderNo)
+                        : String.format("【小木棒洗衣】尊敬的%s您送洗的%d件衣物已收衣，订单号%s，门店：金方世纪城民磬路108号",
+                                customer.getName(), totalCount, orderNo),
                 "RECEIVE", order.getId(), orderNo);
 
         // ========== Step 13: 构造响应（打印预览完整数据）==========
@@ -922,6 +1003,10 @@ public class OrderServiceImpl implements OrderService {
         StagingDetailResponse resp = new StagingDetailResponse();
         resp.setId(order.getId());
         resp.setOrderNo(order.getOrderNo());
+        resp.setOrderType(order.getOrderType());
+        resp.setSourceOrderId(order.getSourceOrderId());
+        resp.setSourceOrderNo(order.getSourceOrderNo());
+        resp.setRewashReason(order.getRewashReason());
         resp.setReceiveTime(order.getReceiveTime());
         resp.setCustomerName(order.getCustomerName());
         resp.setCustomerPhone(order.getCustomerPhone());
@@ -1015,6 +1100,8 @@ public class OrderServiceImpl implements OrderService {
         for (OrderItem item : items) {
             StagingDetailItemResponse ir = new StagingDetailItemResponse();
             ir.setId(item.getId());
+            ir.setCategoryId(item.getCategoryId());
+            ir.setCategoryGroup(item.getCategoryGroup());
             ir.setBarcode(item.getBarcode());
             ir.setBarcodeImageBase64(BarcodeUtil.generateCode128SvgDataUri(item.getBarcode()));
             ir.setItemSeq(item.getItemSeq());
@@ -1158,6 +1245,21 @@ public class OrderServiceImpl implements OrderService {
             log.error("获取最近订单失败, storeCode={}, limit={}", storeCode, size, e);
         }
         return result;
+    }
+
+    private String requireCustomName(String value) {
+        String name = value == null ? "" : value.trim();
+        if (name.isEmpty() || name.length() > 100) throw new IllegalArgumentException("自定义衣物名称需为1至100字");
+        return name;
+    }
+
+    private void createPendingNotification(LaundryOrder source,String type,String storeCode,Long operatorId,String operatorName,LocalDateTime now){
+        String content="STORE_RETURN_DELAY".equals(type)?"衣物正在返洗处理，取衣时间可能延后。":"返洗衣物已重新回店，可以取衣。";
+        for(String channel:List.of("SMS","MINIAPP"))jdbc.update("""
+            INSERT INTO customer_notification(request_id,store_code,order_id,order_no,notification_type,channel,recipient,content,status,last_error,operator_id,operator_name,create_time,update_time)
+            VALUES (?,?,?,?,?,?,?,?, 'NOT_CONFIGURED','通知渠道尚未配置',?,?,?,?)
+            """,java.util.UUID.randomUUID().toString(),storeCode,source.getId(),source.getOrderNo(),type,channel,
+            "SMS".equals(channel)?source.getCustomerPhone():null,content,operatorId,operatorName,now,now);
     }
 
     /** 内部计算结果包装 */

@@ -70,20 +70,14 @@ public class StoreStatisticsController {
               COALESCE(SUM(CASE WHEN payment_method='MEMBER_CARD' THEN total_paid ELSE 0 END),0) AS methodUnspecified
             FROM laundry_order WHERE store_code=? AND receive_time>=? AND receive_time<?
             """,store,from.atStartOfDay(),to.plusDays(1).atStartOfDay());
-        // 当前尚无实际退款流水；以下按全额退款政策估算应退金额，不能当作已退款现金。
-        Map<String,Object> refunds=jdbc.queryForMap("""
-            SELECT COUNT(*) AS cancelledCount,COALESCE(SUM(total_paid),0) AS fullRefundDue
-            FROM laundry_order WHERE store_code=? AND cancel_flag=1
-              AND cancel_time>=? AND cancel_time<?
-            """,store,from.atStartOfDay(),to.plusDays(1).atStartOfDay());
         List<Map<String,Object>> daily=jdbc.queryForList("""
             SELECT DATE(receive_time) AS day,COUNT(*) AS orderCount,SUM(total_paid) AS collected
             FROM laundry_order WHERE store_code=? AND receive_time>=? AND receive_time<?
             GROUP BY DATE(receive_time) ORDER BY day
             """,store,from.atStartOfDay(),to.plusDays(1).atStartOfDay());
         Map<String,Object> result=new LinkedHashMap<>();
-        result.put("receipts",receipts);result.put("refunds",refunds);result.put("daily",daily);
-        result.put("basis","按收衣实收日期统计资金流入；会员卡扣款只列示不重复计收入。取消订单按全额应退估算，尚无实际退款流水。");
+        result.put("receipts",receipts);result.put("daily",daily);
+        result.put("basis","按收衣实收日期统计资金流入；会员卡扣款只列示不重复计收入。");
         return Result.success(result);
     }
 }

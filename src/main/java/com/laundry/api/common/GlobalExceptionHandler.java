@@ -143,7 +143,7 @@ public class GlobalExceptionHandler {
     private String module(HttpServletRequest request) {
         if(request==null||request.getRequestURI()==null)return "未知模块";
         String path=request.getRequestURI();
-        if(path.contains("supplement"))return "补收附件";if(path.contains("order-cancel"))return "删除查询";
+        if(path.contains("supplement"))return "补收附件";
         if(path.contains("store-return"))return "衣物回店";if(path.contains("pickup"))return "取衣闭单";
         if(path.contains("factory-dispatch"))return "装车送厂";if(path.contains("member-card"))return "会员卡";
         if(path.contains("order"))return "订单";if(path.contains("auth"))return "登录";return "系统接口";

@@ -23,8 +23,8 @@ public class PickupService {
 
     public List<Map<String, Object>> ready(String storeCode) {
         return jdbc.queryForList("""
-                SELECT order_no AS orderNo, customer_name AS customerName,
-                       customer_phone AS customerPhone, pickup_code AS pickupCode,
+                SELECT order_no AS orderNo,
+                       CONCAT(LEFT(customer_phone,3),'****',RIGHT(customer_phone,4)) AS maskedPhone,
                        total_count AS totalCount, debt_amount AS debtAmount, status
                 FROM laundry_order WHERE store_code=? AND pickup_code IS NOT NULL
                   AND status IN ('BACK_TO_STORE', 'NOTIFIED') AND cancel_flag=0
@@ -39,43 +39,21 @@ public class PickupService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> scan(String phone, String code, String barcode,
-                                    String storeCode, Long operatorId) {
-        Map<String, Object> order = findOrder(phone, code, storeCode, true);
-        assertCanPickup(order);
-        long orderId = ((Number) order.get("id")).longValue();
-        List<Map<String, Object>> items = jdbc.queryForList("""
-                SELECT id, status FROM order_item WHERE order_id=? AND barcode=?
-                """, orderId, barcode.trim());
-        if (items.isEmpty()) throw new IllegalArgumentException("该条码不属于此订单，请核对");
-        if (!"BACK_TO_STORE".equals(items.get(0).get("status")))
-            throw new IllegalArgumentException("这件衣物尚未完成回店签收");
-        Integer scanned = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM store_pickup_scan WHERE order_id=? AND barcode=?
-                """, Integer.class, orderId, barcode.trim());
-        if (scanned != null && scanned > 0) throw new IllegalArgumentException("这件衣物已经核对过");
-        jdbc.update("""
-                INSERT INTO store_pickup_scan(order_id, order_item_id, barcode, operator_id, scan_time)
-                VALUES (?, ?, ?, ?, ?)
-                """, orderId, items.get(0).get("id"), barcode.trim(), operatorId, LocalDateTime.now());
-        return detail(order);
-    }
-
-    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> close(String phone, String code, String storeCode,
                                      Long operatorId, String operatorName) {
         Map<String, Object> order = findOrder(phone, code, storeCode, true);
         assertCanPickup(order);
         long orderId = ((Number) order.get("id")).longValue();
         Integer totalItems = jdbc.queryForObject("SELECT COUNT(*) FROM order_item WHERE order_id=?", Integer.class, orderId);
-        Integer scanned = jdbc.queryForObject("SELECT COUNT(*) FROM store_pickup_scan WHERE order_id=?", Integer.class, orderId);
         int expected = ((Number) order.get("total_count")).intValue();
-        if (expected < 1 || totalItems == null || totalItems != expected || scanned == null || scanned != expected)
-            throw new IllegalArgumentException("必须逐件核对整单全部 " + expected + " 件衣物后才能闭单");
+        List<String> shelfCodes = jdbc.query("""
+                SELECT shelf_code FROM order_item
+                WHERE order_id=? AND shelf_status=1 ORDER BY CAST(shelf_code AS UNSIGNED)
+                """, (rs, rowNum) -> rs.getString(1), orderId);
         Integer pendingItems = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM order_item WHERE order_id=? AND status<>'BACK_TO_STORE'
                 """, Integer.class, orderId);
-        if (pendingItems != null && pendingItems > 0) throw new IllegalArgumentException("整单衣物尚未全部回店");
+        validateCloseState(expected, totalItems, pendingItems);
         LocalDateTime now = LocalDateTime.now();
         int changed = jdbc.update("""
                 UPDATE laundry_order SET status='PICKED_UP', pickup_time=?, pickup_operator=?, update_time=?
@@ -101,11 +79,11 @@ public class PickupService {
         jdbc.update("""
                 INSERT INTO order_operate_log(order_id, order_no, operate_type, operate_desc,
                     before_status, after_status, operator_id, operator_name, operate_time, create_time)
-                VALUES (?, ?, 'PICKUP', '取衣码、手机号及全部衣物条码核对后整单交付',
+                VALUES (?, ?, 'PICKUP', '手机号和取衣码确认后整单交付',
                     ?, 'PICKED_UP', ?, ?, ?, ?)
                 """, orderId, order.get("order_no"), order.get("status"), operatorId, operatorName, now, now);
         return Map.of("orderNo", order.get("order_no"), "itemCount", expected, "pickupTime", now,
-                "status", "PICKED_UP");
+                "status", "PICKED_UP", "shelfCodes", shelfCodes);
     }
 
     private Map<String, Object> findOrder(String phone, String code, String storeCode, boolean lock) {
@@ -135,14 +113,20 @@ public class PickupService {
             throw new IllegalArgumentException("整单大件尚未全部完成回店签收");
     }
 
+    static void validateCloseState(int expected, Integer totalItems, Integer pendingItems) {
+        if (expected < 1 || totalItems == null || totalItems != expected)
+            throw new IllegalArgumentException("订单衣物数量异常，无法闭单");
+        if (pendingItems != null && pendingItems > 0)
+            throw new IllegalArgumentException("整单衣物尚未全部回店");
+    }
+
     private Map<String, Object> detail(Map<String, Object> order) {
         long orderId = ((Number) order.get("id")).longValue();
         List<Map<String, Object>> items = jdbc.queryForList("""
                 SELECT oi.barcode, oi.category_name AS categoryName, oi.color,
                        oi.shelf_code AS shelfCode,
-                       CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS scanned
+                       oi.status
                 FROM order_item oi
-                LEFT JOIN store_pickup_scan s ON s.order_id=oi.order_id AND s.order_item_id=oi.id
                 WHERE oi.order_id=? ORDER BY oi.item_seq
                 """, orderId);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -153,7 +137,6 @@ public class PickupService {
         result.put("totalCount", order.get("total_count"));
         result.put("debtAmount", order.get("debt_amount"));
         result.put("items", items);
-        result.put("scannedCount", items.stream().filter(i -> ((Number) i.get("scanned")).intValue() == 1).count());
         return result;
     }
 }

@@ -20,6 +20,7 @@ public class StoreOperationsController {
     public StoreOperationsController(JdbcTemplate jdbc, CurrentUserUtil user) { this.jdbc = jdbc; this.user = user; }
 
     public record NotifyRequest(@NotBlank String orderNo, @NotBlank String channel) {}
+    public record UndoNotifyRequest(@NotBlank String orderNo) {}
     public record ErrorRequest(@NotBlank String orderNo, @NotBlank String type, @NotBlank String description) {}
     public record ResolveRequest(@NotBlank String action, @NotBlank String note) {}
 
@@ -59,12 +60,31 @@ public class StoreOperationsController {
         return Result.success(Map.of("content", content, "channel", channel, "notifiedAt", now));
     }
 
+    @PostMapping("/notifications/undo")
+    @Transactional
+    public Result<Map<String, Object>> undoNotification(@Valid @RequestBody UndoNotifyRequest request) {
+        LocalDateTime cutoff=LocalDateTime.now().minusSeconds(15);
+        List<Map<String,Object>> rows=jdbc.queryForList("""
+            SELECT n.id,n.order_id FROM pickup_notification n
+            JOIN laundry_order o ON o.id=n.order_id
+            WHERE o.order_no=? AND o.store_code=? AND n.operator_id=? AND n.notified_at>=?
+            ORDER BY n.id DESC LIMIT 1 FOR UPDATE
+            """,request.orderNo().trim(),user.getStoreCode(),user.getOperatorId(),cutoff);
+        if(rows.size()!=1) throw new IllegalArgumentException("撤销时间已过，通知记录已保留");
+        Map<String,Object> notification=rows.get(0);
+        jdbc.update("DELETE FROM pickup_notification WHERE id=?",notification.get("id"));
+        Integer remaining=jdbc.queryForObject("SELECT COUNT(*) FROM pickup_notification WHERE order_id=?",Integer.class,notification.get("order_id"));
+        if(remaining!=null&&remaining==0) jdbc.update("UPDATE laundry_order SET status='BACK_TO_STORE',update_time=? WHERE id=? AND status='NOTIFIED'",LocalDateTime.now(),notification.get("order_id"));
+        return Result.success(Map.of("orderNo",request.orderNo().trim(),"undone",true));
+    }
+
     @GetMapping("/clothes")
     public Result<List<Map<String, Object>>> clothes(@RequestParam String keyword) {
         String term = keyword == null ? "" : keyword.trim();
         if (term.length()<3 || term.length()>30) throw new IllegalArgumentException("请输入至少3位订单号、衣物码或手机号");
         return Result.success(jdbc.queryForList("""
             SELECT o.id AS orderId, o.order_no AS orderNo, o.customer_phone AS phone, o.status AS orderStatus,
+                   o.order_type AS orderType, o.source_order_no AS sourceOrderNo,
                    o.receive_time AS receiveTime, o.pickup_time AS pickupTime,
                    i.barcode, i.category_name AS categoryName, i.color, i.brand,
                    i.status AS itemStatus, i.shelf_code AS shelfCode, i.error_back_flag AS errorBackFlag,
@@ -169,6 +189,27 @@ public class StoreOperationsController {
                 SET oi.error_back_flag=0,oi.error_back_remark=NULL,oi.error_back_time=NULL
                 WHERE fp.order_no=?
                 """,error.get("order_no"));
+        } else {
+            LocalDateTime now=LocalDateTime.now();
+            jdbc.update("""
+                INSERT INTO shelf_operation_log(store_code,order_id,order_item_id,order_no,barcode,action,
+                    from_shelf_no,operator_id,operator_name,operate_time)
+                SELECT o.store_code,oi.order_id,oi.id,oi.order_no,oi.barcode,'OFF_SHELF',
+                    CAST(oi.shelf_code AS UNSIGNED),?,?,?
+                FROM order_item oi JOIN laundry_order o ON o.id=oi.order_id
+                WHERE o.order_no=? AND o.store_code=? AND oi.shelf_status=1
+                """,user.getOperatorId(),user.getOperatorName(),now,error.get("order_no"),user.getStoreCode());
+            jdbc.update("""
+                DELETE sp FROM shelf_position sp
+                JOIN order_item oi ON oi.id=sp.order_item_id
+                JOIN laundry_order o ON o.id=oi.order_id
+                WHERE o.order_no=? AND o.store_code=? AND sp.status='OCCUPIED'
+                """,error.get("order_no"),user.getStoreCode());
+            jdbc.update("""
+                UPDATE order_item oi JOIN laundry_order o ON o.id=oi.order_id
+                SET oi.shelf_status=0,oi.shelf_code=NULL,oi.off_shelf_time=?,oi.update_time=?
+                WHERE o.order_no=? AND o.store_code=? AND oi.shelf_status=1
+                """,now,now,error.get("order_no"),user.getStoreCode());
         }
         jdbc.update("""
             UPDATE store_return_error SET status=?,resolution_note=?,resolved_by=?,resolved_at=?

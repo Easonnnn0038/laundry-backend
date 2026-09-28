@@ -21,8 +21,6 @@ public class PickupController {
     }
 
     public record IdentifyRequest(@NotBlank String phone, @NotBlank String pickupCode) {}
-    public record ScanRequest(@NotBlank String phone, @NotBlank String pickupCode,
-                              @NotBlank String barcode) {}
 
     @PostMapping("/prepare-legacy")
     public Result<Map<String, Integer>> prepareLegacy() {
@@ -37,12 +35,6 @@ public class PickupController {
     @PostMapping("/lookup")
     public Result<Map<String, Object>> lookup(@Valid @RequestBody IdentifyRequest request) {
         return Result.success(service.lookup(request.phone(), request.pickupCode(), currentUser.getStoreCode()));
-    }
-
-    @PostMapping("/scan")
-    public Result<Map<String, Object>> scan(@Valid @RequestBody ScanRequest request) {
-        return Result.success(service.scan(request.phone(), request.pickupCode(), request.barcode(),
-                currentUser.getStoreCode(), currentUser.getOperatorId()));
     }
 
     @PostMapping("/close")

@@ -14,6 +14,11 @@ public class StagingDetailItemResponse {
     /** 衣物明细ID */
     private Long id;
 
+    /** 衣物类别ID，返洗时用于原样带回收衣页面 */
+    private Long categoryId;
+
+    private String categoryGroup;
+
     /** 条码 */
     private String barcode;
 

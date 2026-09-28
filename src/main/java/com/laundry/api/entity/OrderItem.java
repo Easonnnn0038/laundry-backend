@@ -21,6 +21,9 @@ public class OrderItem {
     /** 订单ID */
     private Long orderId;
 
+    /** 返洗来源衣物ID */
+    private Long sourceOrderItemId;
+
     /** 订单编号（冗余） */
     private String orderNo;
 

@@ -40,13 +40,7 @@ public class StoreReturnController {
     public Result<Map<String, Object>> scanOrder(@PathVariable long batchId, @PathVariable String orderNo,
                                                  @Valid @RequestBody OrderScanRequest request) {
         return Result.success(service.scanOrder(batchId, orderNo, request.barcode(),
-                currentUser.getStoreCode(), currentUser.getOperatorId()));
-    }
-
-    @PostMapping("/batches/{batchId}/orders/{orderNo}/confirm")
-    public Result<Map<String, Object>> confirmOrder(@PathVariable long batchId, @PathVariable String orderNo) {
-        return Result.success(service.confirmOrder(batchId, orderNo, currentUser.getStoreCode(),
-                currentUser.getOperatorId(), currentUser.getOperatorName()));
+                currentUser.getStoreCode(), currentUser.getOperatorId(), currentUser.getOperatorName()));
     }
 
     @PostMapping("/batches/{batchId}/orders/{orderNo}/exception")
