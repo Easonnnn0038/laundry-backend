@@ -5,6 +5,7 @@ import com.laundry.api.service.PickupService;
 import com.laundry.api.utils.CurrentUserUtil;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,7 +21,8 @@ public class PickupController {
         this.service = service; this.currentUser = currentUser;
     }
 
-    public record IdentifyRequest(@NotBlank String phone, @NotBlank String pickupCode) {}
+    public record IdentifyRequest(@NotBlank String identifier) {}
+    public record CloseRequest(@NotBlank String identifier, @NotEmpty List<Long> itemIds) {}
 
     @PostMapping("/prepare-legacy")
     public Result<Map<String, Integer>> prepareLegacy() {
@@ -34,12 +36,12 @@ public class PickupController {
 
     @PostMapping("/lookup")
     public Result<Map<String, Object>> lookup(@Valid @RequestBody IdentifyRequest request) {
-        return Result.success(service.lookup(request.phone(), request.pickupCode(), currentUser.getStoreCode()));
+        return Result.success(service.lookup(request.identifier(), currentUser.getStoreCode()));
     }
 
     @PostMapping("/close")
-    public Result<Map<String, Object>> close(@Valid @RequestBody IdentifyRequest request) {
-        return Result.success(service.close(request.phone(), request.pickupCode(), currentUser.getStoreCode(),
+    public Result<Map<String, Object>> close(@Valid @RequestBody CloseRequest request) {
+        return Result.success(service.close(request.identifier(), request.itemIds(), currentUser.getStoreCode(),
                 currentUser.getOperatorId(), currentUser.getOperatorName()));
     }
 }

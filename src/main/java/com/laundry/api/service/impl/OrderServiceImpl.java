@@ -97,7 +97,7 @@ public class OrderServiceImpl implements OrderService {
                     .eq(LaundryOrder::getId, request.getSourceOrderId()).last("FOR UPDATE"));
             if (sourceOrder == null || !storeCode.equals(sourceOrder.getStoreCode()))
                 throw new IllegalArgumentException("返洗来源订单不存在");
-            if ((!storeReturn && !"PICKED_UP".equals(sourceOrder.getStatus()))
+            if ((!storeReturn && !Set.of("PICKED_UP","PARTIALLY_PICKED_UP").contains(sourceOrder.getStatus()))
                     || (storeReturn && !Set.of("BACK_TO_STORE","NOTIFIED").contains(sourceOrder.getStatus()))
                     || !Integer.valueOf(0).equals(sourceOrder.getCancelFlag()))
                 throw new IllegalArgumentException(storeReturn ? "仅已回店且未取走的订单可以店返" : "仅已取衣订单可以客返");
@@ -113,6 +113,10 @@ public class OrderServiceImpl implements OrderService {
                 if (sourceItem == null || !sourceOrder.getId().equals(sourceItem.getOrderId())
                         || !sourceItem.getCategoryId().equals(item.getCategoryId()))
                     throw new IllegalArgumentException("返洗衣物不属于来源订单");
+                if (!storeReturn && !"PICKED_UP".equals(sourceItem.getStatus()))
+                    throw new IllegalArgumentException("只有已经取走的衣物可以客返");
+                if (storeReturn && !"BACK_TO_STORE".equals(sourceItem.getStatus()))
+                    throw new IllegalArgumentException("只有尚未取走的回店衣物可以店返");
                 rewashSourceItems.put(sourceItem.getId(), sourceItem);
             }
             request.setNewCardFlag(0);
@@ -1145,6 +1149,7 @@ public class OrderServiceImpl implements OrderService {
             case "BACK_TO_STORE" -> "已回店";
             case "NOTIFIED" -> "已通知取衣";
             case "PICKED_UP" -> "已取衣";
+            case "PARTIALLY_PICKED_UP" -> "部分取件";
             case "CANCELLED" -> "已取消";
             default -> status;
         };
@@ -1175,7 +1180,7 @@ public class OrderServiceImpl implements OrderService {
 
             // —— 3. 待取衣：状态 BACK_TO_STORE / NOTIFIED （衣物已回店、等待客户取走） ——
             LambdaQueryWrapper<LaundryOrder> pickupQw = new LambdaQueryWrapper<>();
-            pickupQw.in(LaundryOrder::getStatus, "BACK_TO_STORE", "NOTIFIED");
+            pickupQw.in(LaundryOrder::getStatus, "BACK_TO_STORE", "NOTIFIED", "PARTIALLY_PICKED_UP");
             if (storeCode != null && !storeCode.isBlank()) {
                 pickupQw.eq(LaundryOrder::getStoreCode, storeCode);
             }

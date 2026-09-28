@@ -16,7 +16,7 @@ public class PickupCodeService {
 
     public PickupCodeService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    /** 整单回店后生成；同门店同手机号的未闭单订单不得共用取衣码。 */
+    /** 整单回店后生成；同门店的未完成订单不得共用取衣码。 */
     @Transactional(rollbackFor = Exception.class)
     public String ensureCode(long orderId) {
         List<Map<String, Object>> references = jdbc.queryForList(
@@ -32,7 +32,7 @@ public class PickupCodeService {
                 FROM laundry_order WHERE id=? FOR UPDATE
                 """, orderId);
         String status = String.valueOf(order.get("status"));
-        if (!List.of("BACK_TO_STORE", "NOTIFIED", "SENT_TO_FACTORY").contains(status))
+        if (!List.of("BACK_TO_STORE", "NOTIFIED", "PARTIALLY_PICKED_UP", "SENT_TO_FACTORY").contains(status))
             throw new IllegalArgumentException("整单尚未完成回店签收，不能生成取衣码");
         Integer packageCount = jdbc.queryForObject("SELECT COUNT(*) FROM factory_package WHERE order_id=?",
                 Integer.class, orderId);
@@ -45,13 +45,15 @@ public class PickupCodeService {
 
         String phone = String.valueOf(order.get("customer_phone"));
         String store = String.valueOf(order.get("store_code"));
+        // 门店行锁保证不同顾客同时回店时也不会拿到相同的活动取衣码。
+        jdbc.queryForList("SELECT store_code FROM store WHERE store_code=? FOR UPDATE", store);
         for (int attempt = 0; attempt < 100; attempt++) {
             String code = String.format("%04d", random.nextInt(10_000));
             Integer used = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM laundry_order
-                    WHERE store_code=? AND customer_phone=? AND pickup_code=?
-                      AND status IN ('BACK_TO_STORE', 'NOTIFIED', 'SENT_TO_FACTORY') AND id<>?
-                    """, Integer.class, store, phone, code, orderId);
+                    WHERE store_code=? AND pickup_code=?
+                      AND status IN ('BACK_TO_STORE','NOTIFIED','PARTIALLY_PICKED_UP','SENT_TO_FACTORY') AND id<>?
+                    """, Integer.class, store, code, orderId);
             if (used != null && used > 0) continue;
             jdbc.update("UPDATE laundry_order SET pickup_code=?, update_time=? WHERE id=?",
                     code, LocalDateTime.now(), orderId);
@@ -59,7 +61,7 @@ public class PickupCodeService {
             jdbc.update("""
                     INSERT INTO sms_log(phone, content, sms_type, order_id, order_no, send_status)
                     VALUES (?, ?, 'PICKUP', ?, ?, 0)
-                    """, phone, "您的衣物已回店，四位取衣码：" + code + "。请凭手机号和取衣码到店领取。",
+                    """, phone, "您的衣物已回店，四位取衣码：" + code + "。请凭手机号或取衣码到店领取。",
                     orderId, order.get("order_no"));
             return code;
         }
@@ -70,7 +72,7 @@ public class PickupCodeService {
     public int prepareLegacy(String storeCode) {
         List<Long> ids = jdbc.query("""
                 SELECT id FROM laundry_order WHERE store_code=? AND pickup_code IS NULL
-                  AND status IN ('BACK_TO_STORE', 'NOTIFIED') ORDER BY id
+                  AND status IN ('BACK_TO_STORE','NOTIFIED','PARTIALLY_PICKED_UP') ORDER BY id
                 """, (rs, row) -> rs.getLong(1), storeCode);
         for (Long id : ids) ensureCode(id);
         return ids.size();

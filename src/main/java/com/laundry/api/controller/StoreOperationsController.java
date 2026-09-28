@@ -50,7 +50,7 @@ public class StoreOperationsController {
                 || orders.get(0).get("pickup_code")==null)
             throw new IllegalArgumentException("订单尚未完整回店，无法通知取衣");
         Map<String, Object> order = orders.get(0);
-        String content = "衣物已回店，请凭完整手机号和四位取衣码 " + order.get("pickup_code") + " 到店领取。订单号 " + order.get("order_no");
+        String content = "衣物已回店，请凭完整手机号或四位取衣码 " + order.get("pickup_code") + " 到店领取。订单号 " + order.get("order_no");
         LocalDateTime now = LocalDateTime.now();
         jdbc.update("""
             INSERT INTO pickup_notification(order_id,channel,content,operator_id,operator_name,notified_at)

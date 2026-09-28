@@ -117,7 +117,7 @@ public class LaundryOrder {
     /** 操作员姓名（冗余，打印小票用） */
     private String operatorName;
 
-    /** 订单状态：RECEIVED / SENT_TO_FACTORY / BACK_TO_STORE / NOTIFIED / PICKED_UP / CANCELLED */
+    /** 订单状态：RECEIVED / SENT_TO_FACTORY / BACK_TO_STORE / NOTIFIED / PARTIALLY_PICKED_UP / PICKED_UP / CANCELLED */
     private String status;
 
     /** 是否已取消：0否 1是 */
