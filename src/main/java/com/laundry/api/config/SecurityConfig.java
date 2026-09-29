@@ -53,7 +53,8 @@ public class SecurityConfig {
             // 授权规则
             .authorizeHttpRequests(auth -> auth
                 // 登录接口 - 无需认证
-                .requestMatchers("/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/login", "/api/miniapp/auth/login").permitAll()
+                .requestMatchers("/api/miniapp/**").hasRole("MINIAPP")
                 // 登录接口的预检 OPTIONS - 无需认证（双保险）
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                 // Knife4j / Swagger 文档 - 无需认证

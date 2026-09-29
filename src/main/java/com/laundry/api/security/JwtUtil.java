@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.Map;
 
 /**
  * JWT 工具类 - 负责令牌的生成、解析与验证
@@ -42,12 +43,17 @@ public class JwtUtil {
      * @return JWT字符串
      */
     public String generateToken(String username, String role) {
+        return generateToken(username, role, Map.of());
+    }
+
+    public String generateToken(String subject, String role, Map<String, ?> claims) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
-                .subject(username)
+                .subject(subject)
                 .claim("role", role)
+                .claims(claims)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(getSigningKey())

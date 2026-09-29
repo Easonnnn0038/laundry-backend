@@ -115,3 +115,6 @@ app:
     max-publish-attempts: ${RABBITMQ_MAX_PUBLISH_ATTEMPTS:8}
     consumer-max-attempts: ${RABBITMQ_CONSUMER_MAX_ATTEMPTS:3}
     consumer-retry-interval-ms: ${RABBITMQ_CONSUMER_RETRY_INTERVAL_MS:2000}
+  wechat:
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
