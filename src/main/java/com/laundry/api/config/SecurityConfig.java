@@ -54,9 +54,9 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // 登录接口 - 无需认证
                 .requestMatchers("/api/auth/login", "/api/miniapp/auth/login").permitAll()
-                .requestMatchers("/api/miniapp/**").hasRole("MINIAPP")
                 // 登录接口的预检 OPTIONS - 无需认证（双保险）
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers("/api/miniapp/**").hasRole("MINIAPP")
                 // Knife4j / Swagger 文档 - 无需认证
                 .requestMatchers(
                         "/doc.html",
@@ -67,8 +67,8 @@ public class SecurityConfig {
                         "/swagger-resources/**",
                         "/favicon.ico"
                 ).permitAll()
-                // 其他 /api/** 接口 - 需要认证
-                .requestMatchers("/api/**").authenticated()
+                // 其他 /api/** 接口只允许门店员工，小程序令牌不可访问
+                .requestMatchers("/api/**").hasAnyRole("ADMIN", "EMPLOYEE")
                 // 其他请求 - 放行
                 .anyRequest().permitAll()
             )
