@@ -24,6 +24,9 @@ public class ReceiveOrderRequest {
     @Pattern(regexp = "^[A-Za-z0-9_-]{16,64}$", message = "请求号格式不正确")
     private String requestId;
 
+    @Schema(description = "来源上门预约单ID；从上门取衣单导入收衣时传入")
+    private Long pickupOrderId;
+
     @Schema(description = "兼容旧客户端保留；管理员改价不再要求填写原因")
     private String priceOverrideReason;
 

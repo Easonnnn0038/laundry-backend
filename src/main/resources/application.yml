@@ -118,3 +118,6 @@ app:
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
+    test-login-enabled: ${MINIAPP_TEST_LOGIN_ENABLED:false}
+    test-login-key: ${MINIAPP_TEST_LOGIN_KEY:}
+    test-phone: ${MINIAPP_TEST_PHONE:}

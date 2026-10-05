@@ -86,6 +86,20 @@ public class OrderServiceImpl implements OrderService {
         var previous = idempotencyService.begin(idempotencyScope, request.getRequestId(), ReceiveOrderResponse.class);
         if (previous.isPresent()) return previous.get();
 
+        if (request.getPickupOrderId() != null) {
+            List<Map<String, Object>> pickupRows = jdbc.queryForList("""
+                    SELECT id,customer_phone,store_code,status,formal_order_id
+                    FROM pickup_order WHERE id=? FOR UPDATE
+                    """, request.getPickupOrderId());
+            if (pickupRows.isEmpty()) throw new IllegalArgumentException("上门预约单不存在");
+            Map<String, Object> pickup = pickupRows.get(0);
+            if (!storeCode.equals(pickup.get("store_code"))) throw new IllegalArgumentException("无权导入其他门店的预约单");
+            if (!"PICKED_UP".equals(pickup.get("status")) || pickup.get("formal_order_id") != null)
+                throw new IllegalArgumentException("该上门预约单已导入或尚未取回");
+            if (!request.getCustomerPhone().trim().equals(pickup.get("customer_phone")))
+                throw new IllegalArgumentException("收衣手机号与上门预约单不一致");
+        }
+
         boolean rewash = request.getSourceOrderId() != null;
         String rewashType = rewash ? (request.getRewashType() == null ? "CUSTOMER_RETURN" : request.getRewashType().trim().toUpperCase()) : null;
         if (rewash && !Set.of("CUSTOMER_RETURN","STORE_RETURN").contains(rewashType)) throw new IllegalArgumentException("返洗类型不正确");
@@ -415,6 +429,14 @@ public class OrderServiceImpl implements OrderService {
         order.setCreateTime(now);
         order.setUpdateTime(now);
         orderMapper.insert(order);
+
+        if (request.getPickupOrderId() != null) {
+            int linked = jdbc.update("""
+                    UPDATE pickup_order SET status='CONVERTED',formal_order_id=?,formal_order_no=?,update_time=NOW()
+                    WHERE id=? AND store_code=? AND status='PICKED_UP' AND formal_order_id IS NULL
+                    """, order.getId(), orderNo, request.getPickupOrderId(), storeCode);
+            if (linked != 1) throw new IllegalArgumentException("上门预约单状态已变化，请重新导入");
+        }
 
         // ========== Step 7: 写 order_item（生成每件12位条码） ==========
         List<ReceiveOrderItemResponse> itemResps = new ArrayList<>();

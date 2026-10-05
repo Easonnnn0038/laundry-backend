@@ -1,0 +1,42 @@
+CREATE TABLE pickup_order (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    request_id VARCHAR(64) NOT NULL,
+    pickup_no VARCHAR(32) NOT NULL,
+    openid VARCHAR(64) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    contact_name VARCHAR(50) NOT NULL,
+    store_code VARCHAR(32) NOT NULL,
+    pickup_address VARCHAR(255) NOT NULL,
+    appointment_date DATE NOT NULL,
+    appointment_slot VARCHAR(20) NOT NULL,
+    remark VARCHAR(500) NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING_PAYMENT',
+    estimated_amount DECIMAL(10,2) NOT NULL,
+    paid_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    actual_amount DECIMAL(10,2) NULL,
+    adjustment_amount DECIMAL(10,2) NULL,
+    adjustment_status VARCHAR(30) NOT NULL DEFAULT 'NONE',
+    payment_trade_no VARCHAR(64) NULL,
+    formal_order_id BIGINT NULL,
+    formal_order_no VARCHAR(64) NULL,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_pickup_order_no (pickup_no),
+    UNIQUE KEY uk_pickup_order_request (request_id),
+    KEY idx_pickup_order_user (openid, create_time),
+    KEY idx_pickup_order_store_status (store_code, status, appointment_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='小程序上门取衣预约单';
+
+CREATE TABLE pickup_order_item (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    pickup_order_id BIGINT NOT NULL,
+    category_id BIGINT NOT NULL,
+    category_name VARCHAR(100) NOT NULL,
+    unit VARCHAR(20) NOT NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    subtotal DECIMAL(10,2) NOT NULL,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_pickup_item_order (pickup_order_id),
+    CONSTRAINT fk_pickup_item_order FOREIGN KEY (pickup_order_id) REFERENCES pickup_order(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='上门取衣预约衣物';

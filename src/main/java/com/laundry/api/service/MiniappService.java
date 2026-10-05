@@ -21,6 +21,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -39,6 +41,9 @@ public class MiniappService {
 
     @Value("${app.wechat.app-id:}") private String appId;
     @Value("${app.wechat.app-secret:}") private String appSecret;
+    @Value("${app.wechat.test-login-enabled:false}") private boolean testLoginEnabled;
+    @Value("${app.wechat.test-login-key:}") private String testLoginKey;
+    @Value("${app.wechat.test-phone:}") private String testPhone;
     private volatile String accessToken;
     private volatile long accessTokenExpiresAt;
 
@@ -70,6 +75,23 @@ public class MiniappService {
             user.setOpenid(openid);
             user.setUnionid(text(response, "unionid"));
             userMapper.insert(user);
+        }
+        return authResponse(user);
+    }
+
+    @Transactional
+    public Map<String, Object> testLogin(String suppliedKey) {
+        if (!testLoginEnabled || testLoginKey.isBlank() || testPhone.isBlank()
+                || suppliedKey == null || !MessageDigest.isEqual(testLoginKey.getBytes(StandardCharsets.UTF_8), suppliedKey.getBytes(StandardCharsets.UTF_8))) {
+            throw new IllegalArgumentException("测试登录不可用");
+        }
+        if (!testPhone.matches("1\\d{10}")) throw new IllegalStateException("测试手机号配置不正确");
+        String openid = "test-" + testPhone;
+        MiniappUser user = userMapper.selectOne(new LambdaQueryWrapper<MiniappUser>().eq(MiniappUser::getOpenid, openid));
+        if (user == null) {
+            user = new MiniappUser(); user.setOpenid(openid); user.setPhone(testPhone); user.setBindTime(LocalDateTime.now()); userMapper.insert(user);
+        } else if (!testPhone.equals(user.getPhone())) {
+            user.setPhone(testPhone); user.setBindTime(LocalDateTime.now()); userMapper.updateById(user);
         }
         return authResponse(user);
     }
