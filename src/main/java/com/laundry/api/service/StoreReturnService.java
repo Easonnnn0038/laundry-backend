@@ -45,7 +45,7 @@ public class StoreReturnService {
         if (batches.isEmpty()) throw new IllegalArgumentException("回店批次不存在或不属于当前门店");
         Map<String, Object> batch = batches.get(0);
         batch.put("orders", jdbc.queryForList("""
-                SELECT fp.order_no AS orderNo,
+                SELECT fp.order_no AS orderNo, o.order_source AS orderSource,
                        SUM(fp.expected_item_count) AS expectedCount,
                        SUM((SELECT COUNT(*) FROM factory_store_receive_scan s
                             WHERE s.return_batch_package_id=rbp.id)) AS scannedCount,
@@ -55,8 +55,9 @@ public class StoreReturnService {
                        GROUP_CONCAT(DISTINCT rbp.exception_reason SEPARATOR '；') AS exceptionReason
                 FROM factory_return_batch_package rbp
                 JOIN factory_package fp ON fp.id=rbp.package_id
+                JOIN laundry_order o ON o.id=fp.order_id
                 WHERE rbp.return_batch_id=? AND rbp.store_code=?
-                GROUP BY fp.order_no ORDER BY fp.order_no
+                GROUP BY fp.order_no,o.order_source ORDER BY fp.order_no
                 """, batchId, storeCode));
         return batch;
     }

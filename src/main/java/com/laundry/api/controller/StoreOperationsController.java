@@ -27,7 +27,7 @@ public class StoreOperationsController {
     @GetMapping("/notifications")
     public Result<List<Map<String, Object>>> notifications() {
         return Result.success(jdbc.queryForList("""
-            SELECT o.order_no AS orderNo, o.customer_phone AS phone, o.pickup_code AS pickupCode,
+            SELECT o.order_no AS orderNo, o.order_source AS orderSource, o.customer_phone AS phone, o.pickup_code AS pickupCode,
                    o.total_count AS itemCount, o.status,
                    (SELECT COUNT(*) FROM pickup_notification n WHERE n.order_id=o.id) AS notifyCount,
                    (SELECT MAX(n.notified_at) FROM pickup_notification n WHERE n.order_id=o.id) AS lastNotifiedAt
@@ -83,7 +83,7 @@ public class StoreOperationsController {
         String term = keyword == null ? "" : keyword.trim();
         if (term.length()<3 || term.length()>30) throw new IllegalArgumentException("请输入至少3位订单号、衣物码或手机号");
         return Result.success(jdbc.queryForList("""
-            SELECT o.id AS orderId, o.order_no AS orderNo, o.customer_phone AS phone, o.status AS orderStatus,
+            SELECT o.id AS orderId, o.order_no AS orderNo, o.order_source AS orderSource, o.customer_phone AS phone, o.status AS orderStatus,
                    o.order_type AS orderType, o.source_order_no AS sourceOrderNo,
                    o.receive_time AS receiveTime, o.pickup_time AS pickupTime,
                    i.barcode, i.category_name AS categoryName, i.color, i.brand,
@@ -107,10 +107,11 @@ public class StoreOperationsController {
     public Result<List<Map<String, Object>>> returnErrors() {
         requireAdmin();
         return Result.success(jdbc.queryForList("""
-            SELECT e.id, e.store_code AS storeCode,e.package_no AS packageNo,e.order_no AS orderNo,
+            SELECT e.id, e.store_code AS storeCode,e.package_no AS packageNo,e.order_no AS orderNo,o.order_source AS orderSource,
                    e.type,e.description,e.status,e.resolution_note AS resolutionNote,
                    e.created_at AS createdAt,e.resolved_at AS resolvedAt
-            FROM store_return_error e WHERE e.store_code=? ORDER BY e.created_at DESC
+            FROM store_return_error e LEFT JOIN laundry_order o ON o.order_no=e.order_no AND o.store_code=e.store_code
+            WHERE e.store_code=? ORDER BY e.created_at DESC
             """, user.getStoreCode()));
     }
 

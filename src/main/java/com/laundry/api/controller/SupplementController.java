@@ -35,7 +35,7 @@ public class SupplementController {
         String term=keyword==null?"":keyword.trim();
         if(term.length()<4) throw new IllegalArgumentException("请输入完整订单号或手机号");
         return Result.success(jdbc.queryForList("""
-            SELECT o.id,o.order_no AS orderNo,o.customer_phone AS phone,o.status,o.total_count AS totalCount,
+            SELECT o.id,o.order_no AS orderNo,o.order_source AS orderSource,o.customer_phone AS phone,o.status,o.total_count AS totalCount,
                    o.receive_time AS receiveTime FROM laundry_order o
             WHERE o.store_code=? AND o.cancel_flag=0 AND o.status IN ('RECEIVED','SENT_TO_FACTORY')
               AND (o.order_no=? OR o.customer_phone=?) ORDER BY o.receive_time DESC

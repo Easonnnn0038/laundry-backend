@@ -374,6 +374,7 @@ public class OrderServiceImpl implements OrderService {
         LaundryOrder order = new LaundryOrder();
         order.setRequestId(request.getRequestId());
         order.setOrderType(rewash ? rewashType : "NORMAL");
+        order.setOrderSource(request.getPickupOrderId() == null ? "STORE" : "MINIAPP");
         if (rewash) {
             order.setSourceOrderId(sourceOrder.getId());
             order.setSourceOrderNo(sourceOrder.getOrderNo());
@@ -656,6 +657,7 @@ public class OrderServiceImpl implements OrderService {
         ReceiveOrderResponse resp = new ReceiveOrderResponse();
         resp.setOrderId(order.getId());
         resp.setOrderNo(orderNo);
+        resp.setOrderSource(order.getOrderSource());
 
         // 门店信息
         Store store = storeMapper.selectOne(new LambdaQueryWrapper<Store>().eq(Store::getStoreCode, storeCode));
@@ -970,6 +972,7 @@ public class OrderServiceImpl implements OrderService {
             StagingOrderResponse resp = new StagingOrderResponse();
             resp.setId(order.getId());
             resp.setOrderNo(order.getOrderNo());
+            resp.setOrderSource(order.getOrderSource());
             resp.setReceiveTime(order.getReceiveTime());
             resp.setCustomerName(order.getCustomerName());
             resp.setCustomerPhone(order.getCustomerPhone());
@@ -1029,6 +1032,7 @@ public class OrderServiceImpl implements OrderService {
         StagingDetailResponse resp = new StagingDetailResponse();
         resp.setId(order.getId());
         resp.setOrderNo(order.getOrderNo());
+        resp.setOrderSource(order.getOrderSource());
         resp.setOrderType(order.getOrderType());
         resp.setSourceOrderId(order.getSourceOrderId());
         resp.setSourceOrderNo(order.getSourceOrderNo());
@@ -1260,6 +1264,7 @@ public class OrderServiceImpl implements OrderService {
                     DashboardRecentOrderResponse r = new DashboardRecentOrderResponse();
                     r.setOrderId(o.getId());
                     r.setOrderNo(o.getOrderNo());
+                    r.setOrderSource(o.getOrderSource());
                     r.setCustomer(o.getCustomerName());
                     r.setItems(o.getTotalCount() == null ? 0 : o.getTotalCount());
                     r.setStatus(o.getStatus());

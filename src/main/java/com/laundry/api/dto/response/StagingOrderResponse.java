@@ -17,6 +17,8 @@ public class StagingOrderResponse {
     /** 订单编号 */
     private String orderNo;
 
+    private String orderSource;
+
     /** 收衣时间 */
     private LocalDateTime receiveTime;
 

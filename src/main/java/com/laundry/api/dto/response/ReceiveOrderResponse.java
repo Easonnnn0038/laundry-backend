@@ -21,6 +21,9 @@ public class ReceiveOrderResponse {
     @Schema(description = "14位订单编号")
     private String orderNo;
 
+    @Schema(description = "订单来源：STORE门店下单 / MINIAPP小程序下单")
+    private String orderSource;
+
     // ========== 门店信息 ==========
     @Schema(description = "门店名称：小木棒洗衣")
     private String storeName;

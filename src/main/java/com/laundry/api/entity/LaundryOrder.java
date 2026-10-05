@@ -23,6 +23,9 @@ public class LaundryOrder {
     /** NORMAL普通订单 / REWASH返洗订单 */
     private String orderType;
 
+    /** STORE门店下单 / MINIAPP小程序下单 */
+    private String orderSource;
+
     /** 返洗来源订单 */
     private Long sourceOrderId;
     private String sourceOrderNo;

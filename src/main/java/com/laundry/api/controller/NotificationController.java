@@ -18,14 +18,15 @@ public class NotificationController {
     public NotificationController(JdbcTemplate jdbc,CurrentUserUtil user){this.jdbc=jdbc;this.user=user;}
     public record SendRequest(@NotBlank String requestId,@NotEmpty List<String> orderNos,@NotEmpty List<String> channels,@NotBlank String type){}
     @GetMapping("/candidates") public Result<List<Map<String,Object>>> candidates(){return Result.success(jdbc.queryForList("""
-        SELECT o.order_no AS orderNo,CONCAT(LEFT(o.customer_phone,3),'****',RIGHT(o.customer_phone,4)) AS maskedPhone,o.total_count AS itemCount,o.status,
+        SELECT o.order_no AS orderNo,o.order_source AS orderSource,CONCAT(LEFT(o.customer_phone,3),'****',RIGHT(o.customer_phone,4)) AS maskedPhone,o.total_count AS itemCount,o.status,
           CASE WHEN o.status='STORE_REWORKING' THEN 'STORE_RETURN_DELAY' ELSE 'PICKUP_READY' END AS suggestedType,
           (SELECT n.status FROM customer_notification n WHERE n.order_id=o.id ORDER BY n.id DESC LIMIT 1) AS lastStatus
         FROM laundry_order o WHERE o.store_code=? AND o.cancel_flag=0 AND o.status IN ('BACK_TO_STORE','NOTIFIED','PARTIALLY_PICKED_UP','STORE_REWORKING') ORDER BY o.update_time DESC
         """,user.getStoreCode()));}
     @GetMapping("/records") public Result<List<Map<String,Object>>> records(){return Result.success(jdbc.queryForList("""
-        SELECT id,batch_no AS batchNo,order_no AS orderNo,notification_type AS notificationType,channel,status,attempt_count AS attemptCount,last_error AS lastError,sent_at AS sentAt,create_time AS createTime
-        FROM customer_notification WHERE store_code=? ORDER BY id DESC LIMIT 300
+        SELECT n.id,n.batch_no AS batchNo,n.order_no AS orderNo,o.order_source AS orderSource,n.notification_type AS notificationType,n.channel,n.status,n.attempt_count AS attemptCount,n.last_error AS lastError,n.sent_at AS sentAt,n.create_time AS createTime
+        FROM customer_notification n LEFT JOIN laundry_order o ON o.id=n.order_id
+        WHERE n.store_code=? ORDER BY n.id DESC LIMIT 300
         """,user.getStoreCode()));}
     @PostMapping("/send") @Transactional public Result<Map<String,Object>> send(@Valid @RequestBody SendRequest req){
         String type=req.type().trim().toUpperCase();if(!Set.of("PICKUP_READY","STORE_RETURN_DELAY","STORE_RETURN_COMPLETE","PICKUP_REMINDER").contains(type))throw new IllegalArgumentException("通知类型不正确");

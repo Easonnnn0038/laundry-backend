@@ -36,7 +36,7 @@ public class FactoryDispatchService {
                 SELECT id, order_no AS orderNo, customer_name AS customerName,
                        customer_phone AS customerPhone, total_count AS totalCount,
                        urgent_flag AS urgentFlag, receive_time AS receiveTime,
-                       remark
+                       order_source AS orderSource, remark
                 FROM laundry_order
                 WHERE store_code = ? AND status = 'RECEIVED' AND cancel_flag = 0
                 ORDER BY urgent_flag DESC, receive_time ASC
@@ -134,6 +134,7 @@ public class FactoryDispatchService {
 
             Map<String, Object> packageInfo = new LinkedHashMap<>();
             packageInfo.put("packageNo", packageNo); packageInfo.put("orderNo", orderNo);
+            packageInfo.put("orderSource", order.get("order_source"));
             packageInfo.put("itemCount", totalCount); packages.add(packageInfo);
         }
 

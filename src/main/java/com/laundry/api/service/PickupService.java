@@ -27,11 +27,11 @@ public class PickupService {
                 SELECT o.order_no AS orderNo,
                        CONCAT(LEFT(o.customer_phone,3),'****',RIGHT(o.customer_phone,4)) AS maskedPhone,
                        SUM(CASE WHEN i.status='BACK_TO_STORE' THEN 1 ELSE 0 END) AS remainingCount,
-                       o.debt_amount AS debtAmount, o.status
+                       o.debt_amount AS debtAmount, o.status, o.order_source AS orderSource
                 FROM laundry_order o JOIN order_item i ON i.order_id=o.id
                 WHERE o.store_code=? AND o.pickup_code IS NOT NULL
                   AND o.status IN ('BACK_TO_STORE','NOTIFIED','PARTIALLY_PICKED_UP') AND o.cancel_flag=0
-                GROUP BY o.id,o.order_no,o.customer_phone,o.debt_amount,o.status,o.update_time
+                GROUP BY o.id,o.order_no,o.customer_phone,o.debt_amount,o.status,o.order_source,o.update_time
                 ORDER BY o.update_time DESC,o.id DESC LIMIT 100
                 """, storeCode);
     }
@@ -115,7 +115,7 @@ public class PickupService {
         boolean phone=value.matches("1\\d{10}"),code=value.matches("\\d{4}");
         if(!phone&&!code)throw new IllegalArgumentException("请输入完整手机号或四位取衣码");
         List<Map<String,Object>> rows=jdbc.queryForList("""
-                SELECT id,order_no,customer_name,customer_phone,pickup_code,total_count,debt_amount,status,cancel_flag
+                SELECT id,order_no,customer_name,customer_phone,pickup_code,total_count,debt_amount,status,cancel_flag,order_source
                 FROM laundry_order WHERE store_code=? AND %s=?
                   AND status IN ('BACK_TO_STORE','NOTIFIED','PARTIALLY_PICKED_UP') AND cancel_flag=0
                 ORDER BY id
@@ -145,6 +145,7 @@ public class PickupService {
             if(items.isEmpty())continue;
             count+=items.size(); Map<String,Object> one=new LinkedHashMap<>();
             one.put("orderNo",order.get("order_no"));one.put("maskedPhone",mask(String.valueOf(order.get("customer_phone"))));
+            one.put("orderSource",order.get("order_source"));
             one.put("items",items);resultOrders.add(one);
         }
         if(resultOrders.isEmpty())throw new IllegalArgumentException("没有可取走的衣物");

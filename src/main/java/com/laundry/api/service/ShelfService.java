@@ -109,7 +109,7 @@ public class ShelfService {
 
     public List<Map<String,Object>> search(String keyword,String store){String t=keyword==null?"":keyword.trim();if(t.isEmpty())throw new IllegalArgumentException("请输入衣物码、订单号、手机号或货架号");Integer no=t.matches("\\d{1,4}")?Integer.valueOf(t):null;
         return jdbc.queryForList("""
-          SELECT i.id,i.barcode,i.category_name AS categoryName,o.order_no AS orderNo,o.customer_phone AS phone,
+          SELECT i.id,i.barcode,i.category_name AS categoryName,o.order_no AS orderNo,o.order_source AS orderSource,o.customer_phone AS phone,
             i.shelf_code AS shelfNo,i.on_shelf_time AS onShelfTime,i.status AS itemStatus
           FROM order_item i JOIN laundry_order o ON o.id=i.order_id
           WHERE o.store_code=? AND i.shelf_status=1 AND (i.barcode=? OR o.order_no=? OR o.customer_phone=? OR (? IS NOT NULL AND i.shelf_code=CAST(? AS CHAR)))

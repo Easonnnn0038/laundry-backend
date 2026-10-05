@@ -18,6 +18,8 @@ public class StagingDetailResponse {
     /** 订单编号 */
     private String orderNo;
 
+    private String orderSource;
+
     private String orderType;
 
     private Long sourceOrderId;

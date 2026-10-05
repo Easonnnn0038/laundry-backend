@@ -16,6 +16,8 @@ public class DashboardRecentOrderResponse {
     /** 业务订单号；不是回店后才生成的四位取衣码。 */
     private String orderNo;
 
+    private String orderSource;
+
     /** 客户姓名 */
     private String customer;
 
