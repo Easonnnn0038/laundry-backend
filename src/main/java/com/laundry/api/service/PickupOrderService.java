@@ -81,6 +81,26 @@ public class PickupOrderService {
         return Map.of("contactName", "", "pickupAddress", "");
     }
 
+    public Map<String, Object> memberCard(String phone) {
+        requirePhone(phone);
+        List<Map<String, Object>> cards = jdbc.queryForList("""
+                SELECT mc.id,mc.card_no AS cardNo,mc.card_type_name AS cardTypeName,
+                  mc.discount_rate AS discountRate,mc.balance,mc.total_recharge AS totalRecharge,
+                  mc.total_consume AS totalConsume,s.store_name AS storeName,s.phone AS storePhone
+                FROM member_card mc LEFT JOIN store s ON s.store_code=mc.store_code
+                WHERE mc.customer_phone=? AND mc.status=1 ORDER BY mc.id DESC LIMIT 1
+                """, phone);
+        List<Map<String, Object>> options = jdbc.queryForList("""
+                SELECT id,name,amount,discount_rate AS discountRate
+                FROM member_card_type WHERE status=1 ORDER BY amount,id
+                """);
+        if (cards.isEmpty()) return Map.of("active", false, "rechargeOptions", options);
+        Map<String, Object> card = new LinkedHashMap<>(cards.get(0));
+        card.put("active", true);
+        card.put("rechargeOptions", options);
+        return card;
+    }
+
     public List<Map<String, Object>> addresses(String phone) {
         requirePhone(phone);
         return jdbc.queryForList("""

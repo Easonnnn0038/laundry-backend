@@ -41,6 +41,11 @@ public class MiniappController {
         return Result.success(service.profile(user.openid()));
     }
 
+    @GetMapping("/member-card")
+    public Result<Map<String, Object>> memberCard(@AuthenticationPrincipal MiniappPrincipal user) {
+        return Result.success(pickupOrders.memberCard(user.phone()));
+    }
+
     @GetMapping("/orders")
     public Result<List<Map<String, Object>>> orders(@AuthenticationPrincipal MiniappPrincipal user,
                                                      @RequestParam(defaultValue = "false") boolean history) {
