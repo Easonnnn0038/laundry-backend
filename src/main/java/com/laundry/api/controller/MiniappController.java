@@ -62,6 +62,35 @@ public class MiniappController {
         return Result.success(pickupOrders.defaults(user));
     }
 
+    @GetMapping("/addresses")
+    public Result<List<Map<String, Object>>> addresses(@AuthenticationPrincipal MiniappPrincipal user) {
+        return Result.success(pickupOrders.addresses(user.phone()));
+    }
+
+    @PostMapping("/addresses")
+    public Result<Map<String, Object>> createAddress(@AuthenticationPrincipal MiniappPrincipal user,
+            @Valid @RequestBody PickupOrderService.AddressRequest request) {
+        return Result.success(pickupOrders.createAddress(user.phone(), request));
+    }
+
+    @PutMapping("/addresses/{id}")
+    public Result<Map<String, Object>> updateAddress(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable long id,
+            @Valid @RequestBody PickupOrderService.AddressRequest request) {
+        return Result.success(pickupOrders.updateAddress(user.phone(), id, request));
+    }
+
+    @DeleteMapping("/addresses/{id}")
+    public Result<Map<String, Object>> deleteAddress(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable long id) {
+        pickupOrders.deleteAddress(user.phone(), id);
+        return Result.success(Map.of());
+    }
+
+    @PostMapping("/addresses/{id}/default")
+    public Result<Map<String, Object>> defaultAddress(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable long id) {
+        pickupOrders.setDefaultAddress(user.phone(), id);
+        return Result.success(Map.of());
+    }
+
     @PostMapping("/pickup-orders")
     public Result<Map<String, Object>> createPickupOrder(@AuthenticationPrincipal MiniappPrincipal user,
             @Valid @RequestBody PickupOrderService.CreateRequest request) {

@@ -33,6 +33,10 @@ public class PickupOrderService {
     public PickupOrderService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
     public record ItemRequest(@NotNull Long categoryId, @NotNull @Min(1) @Max(20) Integer quantity) {}
+    public record AddressRequest(
+            @NotBlank @Size(max = 50) String contactName,
+            @NotBlank @Size(max = 255) String detailAddress,
+            boolean isDefault) {}
     public record CreateRequest(
             @NotBlank @Pattern(regexp = "^[A-Za-z0-9_-]{16,64}$") String requestId,
             @NotBlank @Size(max = 50) String contactName,
@@ -75,6 +79,54 @@ public class PickupOrderService {
                 """, user.phone());
         if (!customers.isEmpty()) return customers.get(0);
         return Map.of("contactName", "", "pickupAddress", "");
+    }
+
+    public List<Map<String, Object>> addresses(String phone) {
+        requirePhone(phone);
+        return jdbc.queryForList("""
+                SELECT id,contact_name AS contactName,detail_address AS detailAddress,is_default AS isDefault
+                FROM miniapp_address WHERE customer_phone=? ORDER BY is_default DESC,id DESC
+                """, phone);
+    }
+
+    @Transactional
+    public Map<String, Object> createAddress(String phone, AddressRequest request) {
+        requirePhone(phone);
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM miniapp_address WHERE customer_phone=?", Integer.class, phone);
+        if (count != null && count >= 10) throw new IllegalArgumentException("最多保存10个地址");
+        boolean makeDefault = request.isDefault() || count == null || count == 0;
+        if (makeDefault) clearDefault(phone);
+        jdbc.update("""
+                INSERT INTO miniapp_address(customer_phone,contact_name,detail_address,is_default) VALUES(?,?,?,?)
+                """, phone, request.contactName().trim(), request.detailAddress().trim(), makeDefault);
+        Long id = jdbc.queryForObject("SELECT id FROM miniapp_address WHERE customer_phone=? AND contact_name=? AND detail_address=?", Long.class,
+                phone, request.contactName().trim(), request.detailAddress().trim());
+        return address(phone, id);
+    }
+
+    @Transactional
+    public Map<String, Object> updateAddress(String phone, long id, AddressRequest request) {
+        requirePhone(phone); address(phone, id);
+        if (request.isDefault()) clearDefault(phone);
+        jdbc.update("""
+                UPDATE miniapp_address SET contact_name=?,detail_address=?,is_default=? WHERE id=? AND customer_phone=?
+                """, request.contactName().trim(), request.detailAddress().trim(), request.isDefault(), id, phone);
+        ensureDefault(phone);
+        return address(phone, id);
+    }
+
+    @Transactional
+    public void deleteAddress(String phone, long id) {
+        requirePhone(phone);
+        int changed = jdbc.update("DELETE FROM miniapp_address WHERE id=? AND customer_phone=?", id, phone);
+        if (changed != 1) throw new IllegalArgumentException("地址不存在");
+        ensureDefault(phone);
+    }
+
+    @Transactional
+    public void setDefaultAddress(String phone, long id) {
+        requirePhone(phone); address(phone, id); clearDefault(phone);
+        jdbc.update("UPDATE miniapp_address SET is_default=1 WHERE id=? AND customer_phone=?", id, phone);
     }
 
     @Transactional
@@ -124,6 +176,7 @@ public class PickupOrderService {
                 INSERT INTO pickup_order_item(pickup_order_id,category_id,category_name,unit,quantity,catalog_price,unit_price,subtotal)
                 VALUES(?,?,?,?,?,?,?,?)
                 """, id, item.get("id"), item.get("name"), item.get("unit"), item.get("quantity"), item.get("originalPrice"), item.get("price"), item.get("subtotal"));
+        saveAddressIfMissing(user.phone(), request.contactName().trim(), request.pickupAddress().trim());
         return detailForUser(id, user.openid());
     }
 
@@ -190,6 +243,35 @@ public class PickupOrderService {
     }
 
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+
+    private Map<String, Object> address(String phone, Long id) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT id,contact_name AS contactName,detail_address AS detailAddress,is_default AS isDefault
+                FROM miniapp_address WHERE id=? AND customer_phone=?
+                """, id, phone);
+        if (rows.isEmpty()) throw new IllegalArgumentException("地址不存在");
+        return rows.get(0);
+    }
+
+    private void clearDefault(String phone) { jdbc.update("UPDATE miniapp_address SET is_default=0 WHERE customer_phone=?", phone); }
+
+    private void ensureDefault(String phone) {
+        Integer defaults = jdbc.queryForObject("SELECT COUNT(*) FROM miniapp_address WHERE customer_phone=? AND is_default=1", Integer.class, phone);
+        if (defaults != null && defaults == 0) jdbc.update("""
+                UPDATE miniapp_address SET is_default=1 WHERE customer_phone=? ORDER BY id DESC LIMIT 1
+                """, phone);
+    }
+
+    private void saveAddressIfMissing(String phone, String contactName, String detailAddress) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM miniapp_address WHERE customer_phone=?", Integer.class, phone);
+        jdbc.update("""
+                INSERT IGNORE INTO miniapp_address(customer_phone,contact_name,detail_address,is_default) VALUES(?,?,?,?)
+                """, phone, contactName, detailAddress, count == null || count == 0);
+    }
+
+    private static void requirePhone(String phone) {
+        if (phone == null || phone.isBlank()) throw new IllegalArgumentException("请先绑定手机号");
+    }
 
     private MemberPricing memberPricing(String phone) {
         if (phone == null || phone.isBlank()) return null;
