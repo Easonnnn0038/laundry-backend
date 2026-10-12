@@ -1,6 +1,7 @@
 package com.laundry.api.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.laundry.api.dto.request.ReceiveOrderItemRequest;
 import com.laundry.api.dto.request.ReceiveOrderRequest;
 import com.laundry.api.dto.response.ReceiveOrderItemResponse;
@@ -936,6 +937,49 @@ public class OrderServiceImpl implements OrderService {
     private static final String[] STAGING_STATUSES = {"RECEIVED", "SENT_TO_FACTORY", "BACK_TO_STORE"};
 
     @Override
+    public Page<OrderListResponse> getOrders(String storeCode, String keyword, String status,
+                                             String source, LocalDate from, LocalDate to,
+                                             long page, long size) {
+        if (storeCode == null || storeCode.isBlank()) throw new IllegalArgumentException("当前账号未绑定门店");
+        if (from != null && to != null && from.isAfter(to)) throw new IllegalArgumentException("开始日期不能晚于结束日期");
+        if (source != null && !source.isBlank() && !Set.of("STORE", "MINIAPP").contains(source))
+            throw new IllegalArgumentException("下单来源不正确");
+
+        LambdaQueryWrapper<LaundryOrder> qw = new LambdaQueryWrapper<LaundryOrder>()
+                .eq(LaundryOrder::getStoreCode, storeCode);
+        if (keyword != null && !keyword.isBlank()) {
+            String term = keyword.trim();
+            qw.and(w -> w.like(LaundryOrder::getOrderNo, term)
+                    .or().like(LaundryOrder::getCustomerPhone, term));
+        }
+        if (status != null && !status.isBlank()) qw.eq(LaundryOrder::getStatus, status);
+        if (source != null && !source.isBlank()) qw.eq(LaundryOrder::getOrderSource, source);
+        if (from != null) qw.ge(LaundryOrder::getReceiveTime, from.atStartOfDay());
+        if (to != null) qw.lt(LaundryOrder::getReceiveTime, to.plusDays(1).atStartOfDay());
+        qw.orderByDesc(LaundryOrder::getReceiveTime).orderByDesc(LaundryOrder::getId);
+
+        Page<LaundryOrder> orders = orderMapper.selectPage(new Page<>(Math.max(1, page), Math.max(1, Math.min(size, 100))), qw);
+        Page<OrderListResponse> result = new Page<>(orders.getCurrent(), orders.getSize(), orders.getTotal());
+        result.setRecords(orders.getRecords().stream().map(order -> {
+            OrderListResponse item = new OrderListResponse();
+            item.setId(order.getId());
+            item.setOrderNo(order.getOrderNo());
+            item.setOrderType(order.getOrderType());
+            item.setOrderSource(order.getOrderSource());
+            item.setCustomerName(order.getCustomerName());
+            item.setCustomerPhone(order.getCustomerPhone());
+            item.setTotalCount(order.getTotalCount());
+            item.setStatus(order.getStatus());
+            item.setStatusLabel(statusLabel(order.getStatus()));
+            item.setTotalReceivable(order.getTotalReceivable());
+            item.setTotalPaid(order.getTotalPaid());
+            item.setReceiveTime(order.getReceiveTime());
+            return item;
+        }).toList());
+        return result;
+    }
+
+    @Override
     public List<StagingOrderResponse> getStagingList(String status, String storeCode,
                                                      String shelfCode, String customerName,
                                                      String customerPhone) {
@@ -1176,6 +1220,8 @@ public class OrderServiceImpl implements OrderService {
             case "NOTIFIED" -> "已通知取衣";
             case "PICKED_UP" -> "已取衣";
             case "PARTIALLY_PICKED_UP" -> "部分取件";
+            case "STORE_REWORKING" -> "店返处理中";
+            case "REWORK_COMPLETED" -> "返洗已完成";
             case "CANCELLED" -> "已取消";
             default -> status;
         };

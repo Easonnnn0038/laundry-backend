@@ -1,12 +1,14 @@
 package com.laundry.api.controller;
 
 import com.laundry.api.common.Result;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.laundry.api.dto.request.ReceiveOrderRequest;
 import com.laundry.api.dto.response.DashboardRecentOrderResponse;
 import com.laundry.api.dto.response.DashboardStatsResponse;
 import com.laundry.api.dto.response.ReceiveOrderResponse;
 import com.laundry.api.dto.response.StagingDetailResponse;
 import com.laundry.api.dto.response.StagingOrderResponse;
+import com.laundry.api.dto.response.OrderListResponse;
 import com.laundry.api.service.OrderService;
 import com.laundry.api.utils.BarcodeUtil;
 import com.laundry.api.utils.CurrentUserUtil;
@@ -16,7 +18,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.format.annotation.DateTimeFormat;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -57,6 +61,20 @@ public class OrderController {
     }
 
     // ========== 暂存列表 ==========
+
+    @Operation(summary = "查询当前门店全部订单", description = "按收衣时间倒序分页，包含已完成及已取消订单")
+    @GetMapping("/list")
+    public Result<Page<OrderListResponse>> list(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size) {
+        return Result.success(orderService.getOrders(currentUserUtil.getStoreCode(), keyword,
+                status, source, from, to, page, size));
+    }
 
     @Operation(summary = "查询暂存订单列表", description = "查询待送厂/运输中/已回店的订单列表，支持按状态、门店、货架位置、客户姓名/电话筛选")
     @GetMapping("/staging-list")

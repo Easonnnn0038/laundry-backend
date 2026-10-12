@@ -1,12 +1,15 @@
 package com.laundry.api.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.laundry.api.dto.request.ReceiveOrderRequest;
 import com.laundry.api.dto.response.DashboardRecentOrderResponse;
 import com.laundry.api.dto.response.DashboardStatsResponse;
 import com.laundry.api.dto.response.ReceiveOrderResponse;
 import com.laundry.api.dto.response.StagingDetailResponse;
 import com.laundry.api.dto.response.StagingOrderResponse;
+import com.laundry.api.dto.response.OrderListResponse;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -78,4 +81,8 @@ public interface OrderService {
      * @return 最近订单列表
      */
     List<DashboardRecentOrderResponse> getRecentOrders(String storeCode, Integer limit);
+
+    Page<OrderListResponse> getOrders(String storeCode, String keyword, String status,
+                                      String source, LocalDate from, LocalDate to,
+                                      long page, long size);
 }
