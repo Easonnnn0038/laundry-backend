@@ -45,7 +45,7 @@ public class PhotoController {
     @GetMapping("/file/{date}/{filename:.+}")
     public ResponseEntity<FileSystemResource> file(@PathVariable String date,
                                                     @PathVariable String filename) {
-        File photo = photoService.getPhoto(date + "/" + filename);
+        File photo = photoService.readPhoto(date + "/" + filename);
         MediaType type = filename.endsWith(".png") ? MediaType.IMAGE_PNG : MediaType.IMAGE_JPEG;
         return ResponseEntity.ok()
                 .contentType(type)

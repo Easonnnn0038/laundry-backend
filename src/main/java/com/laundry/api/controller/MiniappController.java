@@ -16,8 +16,10 @@ import java.util.Map;
 public class MiniappController {
     private final MiniappService service;
     private final PickupOrderService pickupOrders;
-    public MiniappController(MiniappService service, PickupOrderService pickupOrders) {
-        this.service = service; this.pickupOrders = pickupOrders;
+    private final com.laundry.api.service.DealPackageService deals;
+    public MiniappController(MiniappService service, PickupOrderService pickupOrders,
+                             com.laundry.api.service.DealPackageService deals) {
+        this.service = service; this.pickupOrders = pickupOrders; this.deals = deals;
     }
 
     @PostMapping("/auth/login")
@@ -60,6 +62,11 @@ public class MiniappController {
     @GetMapping("/pickup-catalog")
     public Result<List<Map<String, Object>>> pickupCatalog(@AuthenticationPrincipal MiniappPrincipal user) {
         return Result.success(pickupOrders.catalog(user.phone()));
+    }
+
+    @GetMapping("/deals")
+    public Result<List<Map<String, Object>>> deals() {
+        return Result.success(deals.activePackages());
     }
 
     @GetMapping("/pickup-defaults")

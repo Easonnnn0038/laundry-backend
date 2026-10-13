@@ -18,6 +18,11 @@ spring:
       max-lifetime: 1800000
       connection-timeout: 30000
       connection-test-query: SELECT 1
+      data-source-properties:
+        logSlowQueries: true
+        slowQueryThresholdMillis: ${DB_SLOW_QUERY_MS:1000}
+        autoSlowLog: false
+        logger: Slf4JLogger
 
   servlet:
     multipart:
@@ -57,6 +62,9 @@ spring:
 photo:
   upload-dir: ./uploads/photos
   url-prefix: /photos
+  orphan-retention-hours: ${PHOTO_ORPHAN_RETENTION_HOURS:24}
+  capacity-warning-mb: ${PHOTO_CAPACITY_WARNING_MB:10240}
+  cleanup-cron: ${PHOTO_CLEANUP_CRON:0 20 4 * * *}
 
 maintenance:
   factory-host: ${FACTORY_HOST:127.0.0.1}
@@ -101,6 +109,7 @@ logging:
   level:
     com.laundry.api: info
     org.springframework.security: info
+    com.mysql.cj.protocol.a.NativeProtocol: warn
 
 app:
   seed-default-users: false
@@ -110,6 +119,7 @@ app:
     max-failures: 5
     window-minutes: 15
     block-minutes: 15
+    trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
   rabbitmq:
     outbox-poll-ms: ${RABBITMQ_OUTBOX_POLL_MS:2000}
     max-publish-attempts: ${RABBITMQ_MAX_PUBLISH_ATTEMPTS:8}

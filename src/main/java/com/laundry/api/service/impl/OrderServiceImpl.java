@@ -11,6 +11,7 @@ import com.laundry.api.entity.*;
 import com.laundry.api.mapper.*;
 import com.laundry.api.service.OrderService;
 import com.laundry.api.service.IdempotencyService;
+import com.laundry.api.service.StoreReturnStateService;
 import com.laundry.api.mq.PrintTaskMessage;
 import com.laundry.api.mq.PrintTaskProducer;
 import com.laundry.api.utils.BarcodeUtil;
@@ -77,6 +78,7 @@ public class OrderServiceImpl implements OrderService {
     @Autowired private SeqCounterMapper seqCounterMapper;
     @Autowired private PrintTaskProducer printTaskProducer;
     @Autowired private IdempotencyService idempotencyService;
+    @Autowired private StoreReturnStateService storeReturnStateService;
     @Autowired private JdbcTemplate jdbc;
 
     @Override
@@ -501,11 +503,7 @@ public class OrderServiceImpl implements OrderService {
 
         if (storeReturn) {
             LocalDateTime actionTime=LocalDateTime.now();
-            for (Long sourceItemId : rewashSourceItems.keySet()) {
-                jdbc.update("DELETE FROM shelf_position WHERE store_code=? AND order_item_id=? AND status='OCCUPIED'",storeCode,sourceItemId);
-                jdbc.update("UPDATE order_item SET status='STORE_REWORKING',shelf_status=0,shelf_code=NULL,off_shelf_time=?,update_time=? WHERE id=?",actionTime,actionTime,sourceItemId);
-            }
-            jdbc.update("UPDATE laundry_order SET status='STORE_REWORKING',update_time=? WHERE id=?",actionTime,sourceOrder.getId());
+            storeReturnStateService.start(storeCode, sourceOrder.getId(), rewashSourceItems.keySet(), actionTime);
             createPendingNotification(sourceOrder,"STORE_RETURN_DELAY",storeCode,operatorId,operatorName,actionTime);
         }
 

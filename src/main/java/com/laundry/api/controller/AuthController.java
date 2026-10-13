@@ -7,6 +7,7 @@ import com.laundry.api.entity.User;
 import com.laundry.api.service.AuthService;
 import com.laundry.api.utils.CurrentUserUtil;
 import com.laundry.api.security.LoginAttemptLimiter;
+import com.laundry.api.security.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +38,7 @@ public class AuthController {
 
     @Autowired
     private LoginAttemptLimiter loginLimiter;
+    @Autowired private ClientIpResolver clientIpResolver;
 
     /**
      * 用户登录
@@ -49,7 +51,7 @@ public class AuthController {
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                        HttpServletRequest httpRequest,
                                        HttpServletResponse httpResponse) {
-        String ip = clientIp(httpRequest);
+        String ip = clientIpResolver.resolve(httpRequest);
         if (loginLimiter.blocked(ip, request.getUsername())) {
             httpResponse.setStatus(429);
             return Result.error(429, "登录失败次数过多，请15分钟后重试");
@@ -82,7 +84,4 @@ public class AuthController {
         return Result.success(resp);
     }
 
-    private String clientIp(HttpServletRequest request) {
-        return request.getRemoteAddr();
-    }
 }

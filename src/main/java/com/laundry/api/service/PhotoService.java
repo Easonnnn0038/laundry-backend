@@ -5,6 +5,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
+import com.laundry.api.utils.CurrentUserUtil;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -18,6 +21,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.nio.file.Files;
+import java.time.Instant;
 
 /**
  * 照片服务：保存/删除瑕疵拍照图片到磁盘
@@ -34,6 +39,11 @@ public class PhotoService {
 
     @Value("${photo.url-prefix}")
     private String urlPrefix;
+    @Value("${photo.orphan-retention-hours:24}") private long orphanRetentionHours;
+    @Value("${photo.capacity-warning-mb:10240}") private long capacityWarningMb;
+    private final JdbcTemplate jdbc;
+    private final CurrentUserUtil currentUser;
+    public PhotoService(JdbcTemplate jdbc, CurrentUserUtil currentUser) { this.jdbc=jdbc; this.currentUser=currentUser; }
 
     /**
      * 启动时规范化后的绝对存储根目录。
@@ -125,6 +135,7 @@ public class PhotoService {
         result.put("url", url);
         result.put("size", file.getSize());
         log.info("照片上传成功: {} ({}KB) -> {}", filename, file.getSize() / 1024, dest.getAbsolutePath());
+        audit("UPLOAD", dateDir + "/" + filename, file.getSize(), null);
         return result;
     }
 
@@ -148,11 +159,32 @@ public class PhotoService {
         if (filename == null || filename.isEmpty()) return;
         File file = getPhoto(filename);
         if (file.exists()) {
+            long size=file.length();
             if (!file.delete()) {
                 log.warn("删除照片失败: {}", file.getAbsolutePath());
-            }
+            } else audit("DELETE", filename, size, null);
         }
     }
+
+    public File readPhoto(String filename) { File file=getPhoto(filename);audit("READ",filename,file.length(),null);return file; }
+
+    @Scheduled(cron = "${photo.cleanup-cron:0 20 4 * * *}")
+    public void cleanupOrphans() {
+        if (resolvedRootDir == null || !resolvedRootDir.isDirectory()) return;
+        Instant cutoff=Instant.now().minusSeconds(orphanRetentionHours*3600);long bytes=0;int removed=0;
+        try(var paths=Files.walk(resolvedRootDir.toPath())){
+            for(var path:paths.filter(Files::isRegularFile).toList()){
+                bytes+=Files.size(path);if(Files.getLastModifiedTime(path).toInstant().isAfter(cutoff))continue;
+                String name=resolvedRootDir.toPath().relativize(path).toString().replace('\\','/');
+                Integer refs=jdbc.queryForObject("SELECT COUNT(*) FROM laundry_order WHERE defect_photos LIKE CONCAT('%',?,'%')",Integer.class,name);
+                if(refs!=null&&refs==0&&Files.deleteIfExists(path)){removed++;audit("CLEANUP",name,null,"超过保留期且无订单引用");}
+            }
+        }catch(Exception e){log.error("照片孤儿文件清理失败",e);}
+        if(bytes>capacityWarningMb*1024*1024)log.warn("照片目录容量超过阈值: {} MB",bytes/1024/1024);
+        if(removed>0)log.info("已清理 {} 个孤儿照片文件",removed);
+    }
+
+    private void audit(String action,String filename,Long size,String detail){String operator=null;try{operator=currentUser.getOperatorName();}catch(Exception ignored){}jdbc.update("INSERT INTO photo_access_audit(action,filename,file_size,operator_name,detail) VALUES(?,?,?,?,?)",action,filename,size,operator,detail);}
 
     private void validateFilename(String filename) {
         if (filename == null || !filename.matches("^\\d{8}/[a-f0-9]{32}\\.(jpg|png)$")) {

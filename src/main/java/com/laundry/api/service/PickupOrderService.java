@@ -29,8 +29,9 @@ import java.util.UUID;
 public class PickupOrderService {
     private static final Set<String> SLOTS = Set.of("09:00-12:00", "13:00-17:00", "18:00-20:00");
     private final JdbcTemplate jdbc;
+    private final DealPackageService deals;
 
-    public PickupOrderService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public PickupOrderService(JdbcTemplate jdbc, DealPackageService deals) { this.jdbc = jdbc; this.deals = deals; }
 
     public record ItemRequest(@NotNull Long categoryId, @NotNull @Min(1) @Max(20) Integer quantity) {}
     public record AddressRequest(
@@ -44,7 +45,10 @@ public class PickupOrderService {
             @NotNull @FutureOrPresent LocalDate appointmentDate,
             @NotBlank String appointmentSlot,
             @Size(max = 500) String remark,
-            @NotEmpty @Size(max = 50) List<@Valid ItemRequest> items) {}
+            @NotEmpty @Size(max = 50) List<@Valid ItemRequest> items,
+            String dealCode,
+            String dealPlatform,
+            String voucherCode) {}
     private record MemberPricing(Long cardId, String cardTypeName, BigDecimal discountRate) {}
 
     public List<Map<String, Object>> catalog(String phone) {
@@ -157,6 +161,7 @@ public class PickupOrderService {
         if (!existing.isEmpty()) return detailForUser(((Number) existing.get(0).get("id")).longValue(), user.openid());
         String storeCode = jdbc.queryForObject("SELECT store_code FROM store ORDER BY id LIMIT 1", String.class);
         if (storeCode == null) throw new IllegalStateException("尚未配置营业门店");
+        DealPackageService.Selection deal = deals.validate(request.dealCode(), request.dealPlatform(), request.voucherCode(), request.items());
 
         MemberPricing member = memberPricing(user.phone());
         BigDecimal originalTotal = BigDecimal.ZERO, total = BigDecimal.ZERO;
@@ -178,6 +183,7 @@ public class PickupOrderService {
             saved.put("price", price); saved.put("quantity", item.quantity()); saved.put("subtotal", subtotal);
             items.add(saved);
         }
+        if (deal != null) total = deal.price().setScale(2, RoundingMode.HALF_UP);
         if (total.signum() <= 0) throw new IllegalArgumentException("订单金额必须大于0");
 
         String pickupNo = "PU" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMddHHmmss"))
@@ -185,17 +191,22 @@ public class PickupOrderService {
         jdbc.update("""
                 INSERT INTO pickup_order(request_id,pickup_no,openid,customer_phone,contact_name,store_code,pickup_address,
                   appointment_date,appointment_slot,remark,status,original_amount,discount_amount,member_card_id,
-                  member_card_type,discount_rate,estimated_amount,paid_amount)
-                VALUES(?,?,?,?,?,?,?,?,?,?,'SUBMITTED',?,?,?,?,?,?,0)
+                  member_card_type,discount_rate,estimated_amount,paid_amount,deal_package_id,deal_code,deal_name,
+                  deal_price,deal_platform,deal_voucher_code,deal_rule_snapshot)
+                VALUES(?,?,?,?,?,?,?,?,?,?,'SUBMITTED',?,?,?,?,?,?,0,?,?,?,?,?,?,?)
                 """, request.requestId(), pickupNo, user.openid(), user.phone(), request.contactName().trim(), storeCode,
                 request.pickupAddress().trim(), request.appointmentDate(), request.appointmentSlot(),
                 blankToNull(request.remark()), originalTotal, originalTotal.subtract(total), member == null ? null : member.cardId(),
-                member == null ? null : member.cardTypeName(), member == null ? null : member.discountRate(), total);
+                member == null ? null : member.cardTypeName(), member == null ? null : member.discountRate(), total,
+                deal == null ? null : deal.id(), deal == null ? null : deal.code(), deal == null ? null : deal.name(),
+                deal == null ? null : deal.price(), deal == null ? null : deal.platform(),
+                deal == null ? null : deal.voucherCode(), deal == null ? null : deal.ruleSnapshot());
         Long id = jdbc.queryForObject("SELECT id FROM pickup_order WHERE pickup_no=?", Long.class, pickupNo);
         for (Map<String, Object> item : items) jdbc.update("""
                 INSERT INTO pickup_order_item(pickup_order_id,category_id,category_name,unit,quantity,catalog_price,unit_price,subtotal)
                 VALUES(?,?,?,?,?,?,?,?)
                 """, id, item.get("id"), item.get("name"), item.get("unit"), item.get("quantity"), item.get("originalPrice"), item.get("price"), item.get("subtotal"));
+        deals.redeem(deal, id, user.phone());
         saveAddressIfMissing(user.phone(), request.contactName().trim(), request.pickupAddress().trim());
         return detailForUser(id, user.openid());
     }

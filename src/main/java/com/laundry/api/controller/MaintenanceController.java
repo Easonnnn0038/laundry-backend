@@ -48,7 +48,7 @@ public class MaintenanceController {
     }
 
     @GetMapping("/events") public Result<List<Map<String,Object>>> events(@RequestParam(required=false) String category,@RequestParam(required=false) String status,
-        @RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();return Result.success(findEvents(category,status,from,to));}
+        @RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();validateDates(from,to);return Result.success(findEvents(category,status,from,to));}
 
     @PostMapping("/events/{id}/status") public Result<Map<String,Object>> resolve(@PathVariable long id,@Valid @RequestBody ResolveRequest req){admin();
         String status=req.status().trim().toUpperCase();if(!List.of("OPEN","PROCESSING","RESOLVED","IGNORED").contains(status))throw new IllegalArgumentException("无效处理状态");
@@ -58,6 +58,7 @@ public class MaintenanceController {
 
     @GetMapping("/audit") public Result<List<Map<String,Object>>> audit(@RequestParam(required=false) String keyword,@RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();
         String term=keyword==null?"":keyword.trim();LocalDate start=from==null?LocalDate.now().minusDays(30):from;LocalDate end=to==null?LocalDate.now():to;
+        validateDates(start,end);
         return Result.success(jdbc.queryForList("""
           SELECT l.id,l.order_no AS orderNo,l.operate_type AS operateType,l.operate_desc AS description,
             l.before_status AS beforeStatus,l.after_status AS afterStatus,l.operator_name AS operatorName,
@@ -67,7 +68,7 @@ public class MaintenanceController {
           """,user.getStoreCode(),start.atStartOfDay(),end.plusDays(1).atStartOfDay(),term,term,term));}
 
     @GetMapping("/events/export") public ResponseEntity<byte[]> export(@RequestParam(required=false) String category,@RequestParam(required=false) String status,
-        @RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();List<Map<String,Object>> rows=findEvents(category,status,from,to);
+        @RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();validateDates(from,to);List<Map<String,Object>> rows=findEvents(category,status,from,to);
         StringBuilder csv=new StringBuilder("\uFEFF编号,分类,级别,模块,信息,路径,操作员,门店,次数,首次时间,最近时间,状态,处理说明\r\n");
         for(Map<String,Object> r:rows)csv.append(cell(r.get("id"))).append(',').append(cell(r.get("category"))).append(',').append(cell(r.get("level"))).append(',').append(cell(r.get("module"))).append(',').append(cell(r.get("message"))).append(',').append(cell(r.get("requestPath"))).append(',').append(cell(r.get("operatorUsername"))).append(',').append(cell(r.get("storeCode"))).append(',').append(cell(r.get("occurrenceCount"))).append(',').append(cell(r.get("firstTime"))).append(',').append(cell(r.get("lastTime"))).append(',').append(cell(r.get("status"))).append(',').append(cell(r.get("resolutionNote"))).append("\r\n");
         HttpHeaders h=new HttpHeaders();h.setContentType(new MediaType("text","csv",StandardCharsets.UTF_8));h.setContentDisposition(ContentDisposition.attachment().filename("maintenance-events-"+LocalDate.now()+".csv").build());return ResponseEntity.ok().headers(h).body(csv.toString().getBytes(StandardCharsets.UTF_8));}
@@ -110,5 +111,6 @@ public class MaintenanceController {
     private Map<String,Object> checkOptional(String name,boolean online,String detail){return Map.of("name",name,"state",online?"OK":"UNCONFIGURED","detail",online?detail:"未连接或未配置");}
     private boolean tcp(String host,int port){try(Socket socket=new Socket()){socket.connect(new InetSocketAddress(host,port),350);return true;}catch(Exception e){return false;}}
     private String cell(Object value){String s=value==null?"":String.valueOf(value);if(s.matches("^[=+@-].*"))s="'"+s;return '"'+s.replace("\"","\"\"")+'"';}
+    static void validateDates(LocalDate from,LocalDate to){if(from!=null&&to!=null&&(to.isBefore(from)||to.isAfter(from.plusDays(366))))throw new IllegalArgumentException("查询时间范围不能超过366天");}
     private void admin(){if(!"ADMIN".equals(user.getUser().getRole()))throw new AccessDeniedException("仅管理员可使用远程维护");}
 }
