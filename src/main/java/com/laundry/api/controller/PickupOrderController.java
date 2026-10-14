@@ -38,6 +38,11 @@ public class PickupOrderController {
         return Result.success(service.advance(id, user.getStoreCode(), "confirm"));
     }
 
+    @PostMapping("/confirm-eligible")
+    public Result<Map<String, Object>> confirmEligible() {
+        return Result.success(Map.of("confirmed", service.confirmEligible(user.getStoreCode())));
+    }
+
     @PostMapping("/{id}/picked-up")
     public Result<Map<String, Object>> pickedUp(@PathVariable long id) {
         return Result.success(service.advance(id, user.getStoreCode(), "picked-up"));

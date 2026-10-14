@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -235,6 +237,24 @@ public class PickupOrderService {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM pickup_order WHERE id=? AND store_code=?", id, storeCode);
         if (rows.isEmpty()) throw new IllegalArgumentException("上门取衣单不存在");
         return withItems(rows.get(0));
+    }
+
+    public int confirmEligible(String storeCode) {
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+        String sql = """
+                UPDATE pickup_order SET status='CONFIRMED',update_time=NOW()
+                WHERE status IN ('SUBMITTED','PAID')
+                  AND (appointment_date>? OR (appointment_date=? AND SUBSTRING_INDEX(appointment_slot,'-',-1)>?))
+                """ + (storeCode == null ? "" : " AND store_code=?");
+        String time = now.format(DateTimeFormatter.ofPattern("HH:mm"));
+        return storeCode == null
+                ? jdbc.update(sql, now.toLocalDate(), now.toLocalDate(), time)
+                : jdbc.update(sql, now.toLocalDate(), now.toLocalDate(), time, storeCode);
+    }
+
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Shanghai")
+    public void autoConfirmEligible() {
+        confirmEligible(null);
     }
 
     @Transactional
