@@ -3,6 +3,7 @@ package com.laundry.api.config;
 import com.laundry.api.common.Result;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laundry.api.security.JwtAuthenticationFilter;
+import com.laundry.api.security.MiniappRateLimitFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +18,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.http.HttpStatus;
 
 import java.util.HashMap;
@@ -35,6 +37,14 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    @Autowired private MiniappRateLimitFilter miniappRateLimitFilter;
+
+    @Bean
+    public FilterRegistrationBean<MiniappRateLimitFilter> miniappRateLimitRegistration() {
+        FilterRegistrationBean<MiniappRateLimitFilter> registration = new FilterRegistrationBean<>(miniappRateLimitFilter);
+        registration.setEnabled(false);
+        return registration;
+    }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -98,7 +108,8 @@ public class SecurityConfig {
                 })
             )
             // 在 UsernamePasswordAuthenticationFilter 之前添加 JWT 过滤器
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(miniappRateLimitFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }

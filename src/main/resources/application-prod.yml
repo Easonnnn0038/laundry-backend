@@ -43,3 +43,4 @@ app:
   wechat:
     app-id: ${WECHAT_APP_ID}
     app-secret: ${WECHAT_APP_SECRET}
+    test-login-enabled: false

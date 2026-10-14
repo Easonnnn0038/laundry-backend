@@ -100,9 +100,9 @@ public class JwtUtil {
             parseToken(token);
             return true;
         } catch (JwtException e) {
-            log.warn("JWT验证失败: {}", e.getMessage());
+            log.warn("JWT验证失败");
         } catch (IllegalArgumentException e) {
-            log.warn("JWT令牌为空或格式错误: {}", e.getMessage());
+            log.warn("JWT令牌为空或格式错误");
         }
         return false;
     }

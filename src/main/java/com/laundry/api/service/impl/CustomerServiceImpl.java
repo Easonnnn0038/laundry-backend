@@ -42,7 +42,7 @@ public class CustomerServiceImpl implements CustomerService {
           .eq(Customer::getStoreCode, storeCode);
         Customer c = customerMapper.selectOne(qw);
         if (c == null) {
-            log.debug("未找到客户 phone={}, storeCode={}", phone, storeCode);
+            log.debug("未找到客户 storeCode={}", storeCode);
             return null;
         }
         return toResponse(c);
@@ -69,7 +69,7 @@ public class CustomerServiceImpl implements CustomerService {
             c.setCreateTime(LocalDateTime.now());
             c.setUpdateTime(LocalDateTime.now());
             customerMapper.insert(c);
-            log.info("新增客户 id={}, name={}, phone={}", c.getId(), c.getName(), c.getPhone());
+            log.info("新增客户 id={}", c.getId());
             return toResponse(c);
         } else {
             // 老客户：更新（姓名/地址/备注更新为最新）

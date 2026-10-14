@@ -111,7 +111,7 @@ public class MemberCardServiceImpl implements MemberCardService {
                 c.setCreateTime(LocalDateTime.now());
                 c.setUpdateTime(LocalDateTime.now());
                 customerMapper.insert(c);
-                log.info("办卡时新增客户 id={}, name={}", c.getId(), c.getName());
+                log.info("办卡时新增客户 id={}", c.getId());
             }
             customerId = c.getId();
         }
@@ -183,7 +183,7 @@ public class MemberCardServiceImpl implements MemberCardService {
         rc.setCreateTime(LocalDateTime.now());
         rechargeMapper.insert(rc);
 
-        log.info("办卡成功 cardNo={}, customer={}, 充值={}", cardNo, customer.getName(), rechargeAmount);
+        log.info("办卡成功 cardNo={}, 充值={}", cardNo, rechargeAmount);
         MemberCardSimpleResponse response = toSimpleResponse(card);
         idempotencyService.complete(scope, request.getRequestId(), response);
         return response;

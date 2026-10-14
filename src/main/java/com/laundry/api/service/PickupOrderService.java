@@ -11,13 +11,16 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -155,6 +158,8 @@ public class PickupOrderService {
 
     @Transactional
     public Map<String, Object> create(MiniappPrincipal user, CreateRequest request) {
+        if (jdbc.queryForList("SELECT id FROM miniapp_user WHERE openid=? FOR UPDATE", user.openid()).isEmpty())
+            throw new IllegalArgumentException("小程序登录已失效，请重新登录");
         if (user.phone() == null || user.phone().isBlank()) throw new IllegalArgumentException("请先绑定手机号");
         if (!SLOTS.contains(request.appointmentSlot())) throw new IllegalArgumentException("预约时间段不正确");
         List<Map<String, Object>> existing = jdbc.queryForList("SELECT id FROM pickup_order WHERE request_id=? AND openid=?", request.requestId(), user.openid());
@@ -188,7 +193,7 @@ public class PickupOrderService {
 
         String pickupNo = "PU" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMddHHmmss"))
                 + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
-        jdbc.update("""
+        try { jdbc.update("""
                 INSERT INTO pickup_order(request_id,pickup_no,openid,customer_phone,contact_name,store_code,pickup_address,
                   appointment_date,appointment_slot,remark,status,original_amount,discount_amount,member_card_id,
                   member_card_type,discount_rate,estimated_amount,paid_amount,deal_package_id,deal_code,deal_name,
@@ -201,6 +206,12 @@ public class PickupOrderService {
                 deal == null ? null : deal.id(), deal == null ? null : deal.code(), deal == null ? null : deal.name(),
                 deal == null ? null : deal.price(), deal == null ? null : deal.platform(),
                 deal == null ? null : deal.voucherCode(), deal == null ? null : deal.ruleSnapshot());
+        } catch (DuplicateKeyException e) {
+            List<Long> duplicate = jdbc.query("SELECT id FROM pickup_order WHERE openid=? AND request_id=? FOR UPDATE",
+                    (rs, row) -> rs.getLong(1), user.openid(), request.requestId());
+            if (!duplicate.isEmpty()) return detailForUserCurrent(duplicate.get(0), user.openid());
+            throw e;
+        }
         Long id = jdbc.queryForObject("SELECT id FROM pickup_order WHERE pickup_no=?", Long.class, pickupNo);
         for (Map<String, Object> item : items) jdbc.update("""
                 INSERT INTO pickup_order_item(pickup_order_id,category_id,category_name,unit,quantity,catalog_price,unit_price,subtotal)
@@ -225,6 +236,18 @@ public class PickupOrderService {
         return withItems(rows.get(0));
     }
 
+    private Map<String, Object> detailForUserCurrent(long id, String openid) {
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM pickup_order WHERE id=? AND openid=? FOR UPDATE", id, openid);
+        if (rows.isEmpty()) throw new IllegalArgumentException("上门取衣单不存在");
+        Map<String, Object> result = new LinkedHashMap<>(rows.get(0));
+        result.put("items", jdbc.queryForList("""
+                SELECT id,category_id AS categoryId,category_name AS categoryName,unit,quantity,
+                  catalog_price AS catalogPrice,unit_price AS unitPrice,subtotal
+                FROM pickup_order_item WHERE pickup_order_id=? ORDER BY id FOR UPDATE
+                """, id));
+        return result;
+    }
+
     public List<Map<String, Object>> listForStore(String storeCode, String status) {
         if (status == null || status.isBlank()) return jdbc.queryForList("""
                 SELECT id,pickup_no AS pickupNo,contact_name AS contactName,customer_phone AS customerPhone,
@@ -246,6 +269,24 @@ public class PickupOrderService {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM pickup_order WHERE id=? AND store_code=?", id, storeCode);
         if (rows.isEmpty()) throw new IllegalArgumentException("上门取衣单不存在");
         return withItems(rows.get(0));
+    }
+
+    public int confirmEligible(String storeCode) {
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+        String sql = """
+                UPDATE pickup_order SET status='CONFIRMED',update_time=NOW()
+                WHERE status IN ('SUBMITTED','PAID')
+                  AND (appointment_date>? OR (appointment_date=? AND SUBSTRING_INDEX(appointment_slot,'-',-1)>?))
+                """ + (storeCode == null ? "" : " AND store_code=?");
+        String time = now.format(DateTimeFormatter.ofPattern("HH:mm"));
+        return storeCode == null
+                ? jdbc.update(sql, now.toLocalDate(), now.toLocalDate(), time)
+                : jdbc.update(sql, now.toLocalDate(), now.toLocalDate(), time, storeCode);
+    }
+
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Shanghai")
+    public void autoConfirmEligible() {
+        confirmEligible(null);
     }
 
     @Transactional

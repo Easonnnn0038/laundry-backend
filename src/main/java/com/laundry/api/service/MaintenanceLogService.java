@@ -5,6 +5,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import com.laundry.api.security.MiniappPrincipal;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -49,7 +50,7 @@ public class MaintenanceLogService {
               """,fingerprint,module,safe,safePath,username,store,sanitize(version),now,now);
         }catch(Exception ignored){}
     }
-    private String currentUsername(){Authentication a=SecurityContextHolder.getContext().getAuthentication();return a==null||!a.isAuthenticated()||"anonymousUser".equals(a.getName())?null:a.getName();}
+    private String currentUsername(){Authentication a=SecurityContextHolder.getContext().getAuthentication();return a==null||!a.isAuthenticated()||"anonymousUser".equals(a.getName())||a.getPrincipal() instanceof MiniappPrincipal?null:a.getName();}
     private String storeCode(String username){if(username==null)return null;try{return jdbc.queryForObject("SELECT store_id FROM users WHERE username=?",String.class,username);}catch(DataAccessException e){return null;}}
     private String sanitize(String value){if(value==null)return null;String s=value.replaceAll("(?i)(password|token|secret|authorization)(\\s*[:=]\\s*)[^,;\\s]+","$1$2[已过滤]");return s.length()>1000?s.substring(0,1000):s;}
     private String sha(String value){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){return Integer.toHexString(value.hashCode());}}

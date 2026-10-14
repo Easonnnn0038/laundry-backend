@@ -13,6 +13,8 @@ import com.laundry.api.mapper.OrderItemMapper;
 import com.laundry.api.mapper.StoreMapper;
 import com.laundry.api.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -21,6 +23,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -28,6 +31,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
 
 @Service
 public class MiniappService {
@@ -37,6 +41,8 @@ public class MiniappService {
     private final StoreMapper storeMapper;
     private final JwtUtil jwtUtil;
     private final ObjectMapper json;
+    private final Environment environment;
+    private final JdbcTemplate jdbc;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     @Value("${app.wechat.app-id:}") private String appId;
@@ -49,13 +55,15 @@ public class MiniappService {
 
     public MiniappService(MiniappUserMapper userMapper, LaundryOrderMapper orderMapper,
                           OrderItemMapper itemMapper, StoreMapper storeMapper,
-                          JwtUtil jwtUtil, ObjectMapper json) {
+                          JwtUtil jwtUtil, ObjectMapper json, Environment environment, JdbcTemplate jdbc) {
         this.userMapper = userMapper;
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.storeMapper = storeMapper;
         this.jwtUtil = jwtUtil;
         this.json = json;
+        this.environment = environment;
+        this.jdbc = jdbc;
     }
 
     @Transactional
@@ -81,7 +89,8 @@ public class MiniappService {
 
     @Transactional
     public Map<String, Object> testLogin(String suppliedKey) {
-        if (!testLoginEnabled || testLoginKey.isBlank() || testPhone.isBlank()
+        if (Arrays.asList(environment.getActiveProfiles()).contains("prod")
+                || !testLoginEnabled || testLoginKey.isBlank() || testPhone.isBlank()
                 || suppliedKey == null || !MessageDigest.isEqual(testLoginKey.getBytes(StandardCharsets.UTF_8), suppliedKey.getBytes(StandardCharsets.UTF_8))) {
             throw new IllegalArgumentException("测试登录不可用");
         }
@@ -105,10 +114,56 @@ public class MiniappService {
         failOnWechatError(body, "手机号绑定失败");
         String phone = body.path("phone_info").path("purePhoneNumber").asText(null);
         if (phone == null || !phone.matches("1\\d{10}")) throw new IllegalArgumentException("微信未返回有效手机号");
-        user.setPhone(phone);
-        user.setBindTime(LocalDateTime.now());
-        userMapper.updateById(user);
-        return authResponse(user);
+        jdbc.update("UPDATE miniapp_user SET phone=?,bind_time=NOW(),token_version=token_version+1 WHERE openid=?", phone, openid);
+        return authResponse(requireUser(openid));
+    }
+
+    @Transactional
+    public Map<String, Object> unbindPhone(String openid) {
+        requireUser(openid);
+        jdbc.update("UPDATE miniapp_user SET phone=NULL,bind_time=NULL,token_version=token_version+1 WHERE openid=?", openid);
+        return authResponse(requireUser(openid));
+    }
+
+    @Transactional
+    public Map<String, Object> requestDeletion(String openid) {
+        if (jdbc.queryForList("SELECT id FROM miniapp_user WHERE openid=? FOR UPDATE", openid).isEmpty())
+            throw new IllegalArgumentException("小程序账户不存在");
+        MiniappUser user = requireUser(openid);
+        ensureDeletionRequest(openid, user.getPhone());
+        return Map.of("status", "PENDING", "message", "申请已登记，请到办理业务的门店核验身份后处理");
+    }
+
+    @Transactional
+    public Map<String, Object> closeAccount(String openid) {
+        if (jdbc.queryForList("SELECT id FROM miniapp_user WHERE openid=? FOR UPDATE", openid).isEmpty())
+            throw new IllegalArgumentException("小程序账户不存在");
+        MiniappUser user = requireUser(openid);
+        Integer unfinished = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM pickup_order p
+                LEFT JOIN laundry_order o ON o.id=p.formal_order_id
+                WHERE p.openid=? AND p.status<>'CANCELLED'
+                  AND NOT (p.status='CONVERTED' AND o.status IN ('PICKED_UP','CANCELLED'))
+                """, Integer.class, openid);
+        if (unfinished != null && unfinished > 0)
+            return Map.of("status", "PENDING_SERVICE", "message", "仍有未完成的预约或洗护订单。请先申请删除，服务完成后再注销账户。");
+        ensureDeletionRequest(openid, user.getPhone());
+        if (user.getPhone() != null) {
+            Integer otherUsers = jdbc.queryForObject("SELECT COUNT(*) FROM miniapp_user WHERE phone=? AND openid<>?", Integer.class,
+                    user.getPhone(), openid);
+            if (otherUsers == null || otherUsers == 0)
+                jdbc.update("DELETE FROM miniapp_address WHERE customer_phone=?", user.getPhone());
+        }
+        jdbc.update("UPDATE pickup_order SET openid=NULL WHERE openid=?", openid);
+        if (jdbc.update("DELETE FROM miniapp_user WHERE openid=?", openid) != 1)
+            throw new IllegalArgumentException("小程序账户不存在");
+        return Map.of("status", "ACCOUNT_CLOSED", "message", "账户已注销；依法需保留的交易资料由门店核验处理");
+    }
+
+    private void ensureDeletionRequest(String openid, String phone) {
+        Integer pending = jdbc.queryForObject("SELECT COUNT(*) FROM miniapp_deletion_request WHERE openid=? AND status='PENDING'", Integer.class, openid);
+        if (pending == null || pending == 0)
+            jdbc.update("INSERT INTO miniapp_deletion_request(openid,phone) VALUES(?,?)", openid, phone);
     }
 
     public List<Map<String, Object>> orders(String phone, boolean history) {
@@ -149,8 +204,10 @@ public class MiniappService {
 
     private Map<String, Object> authResponse(MiniappUser user) {
         String phone = user.getPhone();
-        String token = jwtUtil.generateToken(user.getOpenid(), "MINIAPP",
-                phone == null ? Map.of() : Map.of("phone", phone));
+        Map<String, Object> claims = new LinkedHashMap<>();
+        claims.put("authVersion", user.getTokenVersion() == null ? 0 : user.getTokenVersion());
+        if (phone != null) claims.put("phone", phone);
+        String token = jwtUtil.generateToken(user.getOpenid(), "MINIAPP", claims);
         return Map.of("token", token, "bound", phone != null, "phone", phone == null ? "" : maskPhone(phone));
     }
 
@@ -219,28 +276,33 @@ public class MiniappService {
         if (accessToken != null && System.currentTimeMillis() < accessTokenExpiresAt) return accessToken;
         synchronized (this) {
             if (accessToken != null && System.currentTimeMillis() < accessTokenExpiresAt) return accessToken;
-            JsonNode body = get(UriComponentsBuilder.fromUriString("https://api.weixin.qq.com/cgi-bin/token")
+            JsonNode body = send(HttpRequest.newBuilder(UriComponentsBuilder.fromUriString("https://api.weixin.qq.com/cgi-bin/token")
                     .queryParam("grant_type", "client_credential").queryParam("appid", appId).queryParam("secret", appSecret)
-                    .build().encode().toUri());
+                    .build().encode().toUri()).timeout(Duration.ofSeconds(10)).GET().build(), true);
             failOnWechatError(body, "获取微信访问凭证失败");
             accessToken = text(body, "access_token");
             accessTokenExpiresAt = System.currentTimeMillis() + Math.max(60, body.path("expires_in").asLong(7200) - 300) * 1000;
             return accessToken;
         }
     }
-    private JsonNode get(URI uri) { return send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).GET().build()); }
+    private JsonNode get(URI uri) { return send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).GET().build(), false); }
     private JsonNode post(URI uri, Object body) {
         try { return send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body))).build()); }
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body))).build(), false); }
         catch (Exception e) { throw new IllegalArgumentException("调用微信服务失败，请稍后重试"); }
     }
-    private JsonNode send(HttpRequest request) {
+    private JsonNode send(HttpRequest request, boolean safeRetry) {
+        for (int attempt = 0; attempt < (safeRetry ? 2 : 1); attempt++) {
         try {
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (safeRetry && attempt == 0 && (response.statusCode() == 502 || response.statusCode() == 503 || response.statusCode() == 504)) continue;
             if (response.statusCode() / 100 != 2) throw new IllegalArgumentException("微信服务暂时不可用");
             return json.readTree(response.body());
         } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalArgumentException("调用微信服务已中断"); }
+        catch (IOException e) { if (safeRetry && attempt == 0) continue; throw new IllegalArgumentException("调用微信服务失败，请稍后重试"); }
         catch (Exception e) { throw new IllegalArgumentException("调用微信服务失败，请稍后重试"); }
+        }
+        throw new IllegalArgumentException("调用微信服务失败，请稍后重试");
     }
     private void failOnWechatError(JsonNode node, String message) {
         if (node.has("errcode") && node.path("errcode").asInt() != 0) throw new IllegalArgumentException(message + "（" + node.path("errcode").asInt() + "）");

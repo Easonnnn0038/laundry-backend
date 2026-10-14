@@ -15,6 +15,7 @@ public class MiniappUser {
     private String unionid;
     private String phone;
     private LocalDateTime bindTime;
+    private Integer tokenVersion;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

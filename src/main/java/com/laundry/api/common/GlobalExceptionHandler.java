@@ -37,6 +37,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleMethodArgumentNotValid(MethodArgumentNotValidException e, HttpServletRequest request) {
+        if (isMiniapp(request)) return Result.error(400, "请求参数不正确");
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
@@ -51,6 +52,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BindException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleBindException(BindException e, HttpServletRequest request) {
+        if (isMiniapp(request)) return Result.error(400, "请求参数不正确");
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
@@ -75,7 +77,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UsernameNotFoundException.class)
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Result<Void> handleUsernameNotFound(UsernameNotFoundException e) {
-        log.warn("认证失败: {}", e.getMessage());
+        log.warn("认证失败: 用户不存在");
         return Result.error(401, "用户不存在");
     }
 
@@ -95,10 +97,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Result<Void> handleAuthentication(AuthenticationException e) {
-        String msg = e.getMessage();
-        if (msg == null || msg.isBlank()) msg = "用户名或密码错误";
-        log.warn("认证异常: {}", msg);
-        return Result.error(401, msg);
+        log.warn("认证异常");
+        return Result.error(401, "认证失败，请重新登录");
     }
 
     /**
@@ -107,6 +107,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Result<Void> handleIllegalArgument(IllegalArgumentException e, HttpServletRequest request) {
+        if (isMiniapp(request)) {
+            log.warn("小程序请求参数不正确");
+            return Result.error(400, "请求参数不正确，请检查后重试");
+        }
         log.warn("非法参数: {}", e.getMessage());
         maintenanceLog.record("BUSINESS_EXCEPTION","WARN",module(request),e.getMessage(),e,request);
         return Result.error(400, e.getMessage());
@@ -115,7 +119,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public Result<Void> handleAccessDenied(AccessDeniedException e) {
-        return Result.error(403, e.getMessage());
+        return Result.error(403, "权限不足，拒绝访问");
     }
 
     /**
@@ -124,6 +128,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleRuntimeException(RuntimeException e, HttpServletRequest request) {
+        if (isMiniapp(request)) {
+            log.error("小程序请求失败，异常类型: {}", e.getClass().getSimpleName());
+            return Result.error(500, "服务暂时不可用，请稍后重试");
+        }
         log.error("请求 [{}] {} 发生运行时异常: {}", request.getMethod(), request.getRequestURI(), e.getMessage(), e);
         maintenanceLog.record("SYSTEM_ERROR","ERROR",module(request),e.getMessage(),e,request);
         return Result.error(500, e.getMessage());
@@ -135,6 +143,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleException(Exception e, HttpServletRequest request) {
+        if (isMiniapp(request)) {
+            log.error("小程序请求失败，异常类型: {}", e.getClass().getSimpleName());
+            return Result.error(500, "服务暂时不可用，请稍后重试");
+        }
         log.error("请求 [{}] {} 发生异常: {}", request.getMethod(), request.getRequestURI(), e.getMessage(), e);
         maintenanceLog.record("SYSTEM_ERROR","ERROR",module(request),e.getMessage(),e,request);
         return Result.error(500, "服务器内部错误，请稍后重试");
@@ -147,5 +159,11 @@ public class GlobalExceptionHandler {
         if(path.contains("store-return"))return "衣物回店";if(path.contains("pickup"))return "取衣闭单";
         if(path.contains("factory-dispatch"))return "装车送厂";if(path.contains("member-card"))return "会员卡";
         if(path.contains("order"))return "订单";if(path.contains("auth"))return "登录";return "系统接口";
+    }
+
+    private boolean isMiniapp(HttpServletRequest request) {
+        return request != null && request.getRequestURI() != null
+                && (request.getRequestURI().startsWith("/api/miniapp/")
+                    || request.getRequestURI().startsWith("/api/maintenance/miniapp/"));
     }
 }

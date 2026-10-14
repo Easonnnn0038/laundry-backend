@@ -9,10 +9,12 @@ $ErrorActionPreference = 'Stop'
 $storeRoot = Split-Path $PSScriptRoot -Parent
 $factoryRoot = Join-Path (Split-Path $storeRoot -Parent) 'laundryfactory--b'
 $database = 'laundry_e2e_test'
+$databaseCreated = $false
 $storePort = 18080
 $factoryPort = 18081
 $device = 'e2e-device'
 $deviceToken = 'e2e-device-token-at-least-24-characters'
+$previousMySqlPwd = [Environment]::GetEnvironmentVariable('MYSQL_PWD')
 $env:MYSQL_PWD = $MySqlPassword
 $processes = @()
 $logDir = Join-Path ([IO.Path]::GetTempPath()) ('laundry-e2e-' + [guid]::NewGuid())
@@ -26,7 +28,10 @@ function Invoke-MySql([string]$Sql, [string]$Db = '') {
 }
 
 function Reset-TestDatabase {
-    Invoke-MySql "DROP DATABASE IF EXISTS $database; CREATE DATABASE $database CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+    $exists = Invoke-MySql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='$database';"
+    if ([int]($exists | Select-Object -First 1) -ne 0) { throw "Refusing to overwrite existing database: $database" }
+    Invoke-MySql "CREATE DATABASE $database CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+    $script:databaseCreated = $true
     & mysqldump "-u$MySqlUser" --no-data --skip-triggers --single-transaction laundry_db |
         & mysql "-u$MySqlUser" $database
     if ($LASTEXITCODE -ne 0) { throw 'Schema copy failed' }
@@ -87,13 +92,16 @@ try {
     if (-not $storeJar -or -not $factoryJar) { throw 'Backend jar not found' }
 
     $dbUrl = "jdbc:mysql://localhost:3306/$database`?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+    $phone = '139' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+    $testLoginKey = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
     $processes += Start-Process java -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\store.log" -RedirectStandardError "$logDir\store.err.log" -ArgumentList @(
-        '-jar', $storeJar.FullName, "--server.port=$storePort", "--spring.datasource.url=$dbUrl",
+        '-jar', $storeJar.FullName, '--server.address=127.0.0.1', "--server.port=$storePort", "--spring.datasource.url=$dbUrl",
         "--spring.datasource.username=$MySqlUser", "--spring.datasource.password=$MySqlPassword",
         '--app.seed-default-users=true', '--spring.rabbitmq.listener.simple.auto-startup=false',
+        '--app.wechat.test-login-enabled=true', "--app.wechat.test-login-key=$testLoginKey", "--app.wechat.test-phone=$phone",
         '--app.rabbitmq.outbox-poll-ms=3600000', '--knife4j.enable=false', '--springdoc.api-docs.enabled=false')
     $processes += Start-Process java -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\factory.log" -RedirectStandardError "$logDir\factory.err.log" -ArgumentList @(
-        '-jar', $factoryJar.FullName, "--server.port=$factoryPort", "--spring.datasource.url=$dbUrl",
+        '-jar', $factoryJar.FullName, '--server.address=127.0.0.1', "--server.port=$factoryPort", "--spring.datasource.url=$dbUrl",
         "--spring.datasource.username=$MySqlUser", "--spring.datasource.password=$MySqlPassword",
         "--factory.security.device-tokens=$device`:$deviceToken", '--knife4j.enable=false', '--springdoc.api-docs.enabled=false')
 
@@ -112,7 +120,6 @@ try {
     if (-not $clothes -or -not $shoes) { throw 'Need enabled clothes and shoes categories' }
     $categories = @($clothes, $shoes)
     $total = [decimal]$categories[0].price + [decimal]$categories[1].price
-    $phone = '139' + (Get-Random -Minimum 10000000 -Maximum 99999999)
     $items = @($categories | ForEach-Object { @{
         categoryId=$_.id; quantity=1; unitPrice=$_.price; color='测试色'; brand='E2E'; size='M'
     } })
@@ -165,12 +172,34 @@ try {
     $expectedPaid = '{0:F2}' -f $total
     Assert-Equal "PICKED_UP|2|2|2|$expectedPaid|0.00" ($audit | Select-Object -First 1) 'Final database state'
     Write-Host "E2E_OK order=$($received.orderNo) items=2 status=PICKED_UP paid=$total debt=0.00"
+
+    $miniappLogin = Invoke-Json POST "$storeBase/api/miniapp/auth/test-login" $null @{ 'X-Miniapp-Test-Key' = $testLoginKey }
+    $miniappHeaders = @{ Authorization = "Bearer $($miniappLogin.token)" }
+    $request = Invoke-Json POST "$storeBase/api/miniapp/account/deletion-request" $null $miniappHeaders
+    Assert-Equal 'PENDING' $request.status 'Deletion request registration'
+    $requests = Invoke-Json GET "$storeBase/api/maintenance/miniapp/deletion-requests" $null $storeHeaders
+    $deletion = $requests | Where-Object { $_.phone -eq $phone -and $_.status -eq 'PENDING' } | Select-Object -First 1
+    if (-not $deletion) { throw 'Deletion request not visible to administrator' }
+    $account = Invoke-Json POST "$storeBase/api/maintenance/miniapp/deletion-requests/$($deletion.id)/account-closure" @{
+        identityVerified=$true; note='测试环境模拟核验'
+    } $storeHeaders
+    Assert-Equal 'ACCOUNT_CLOSED' $account.status 'Administrator account closure'
+    $early = Invoke-Json POST "$storeBase/api/maintenance/miniapp/deletion-requests/$($deletion.id)/clear-due" $null $storeHeaders
+    Assert-Equal 'WAITING_RETENTION' $early.status 'Recent order must remain identifiable'
+    Assert-Equal 0 $early.formalOrders 'No recent order cleared'
+    Invoke-MySql "UPDATE laundry_order SET pickup_time=DATE_SUB(NOW(),INTERVAL 7 MONTH) WHERE id=$($received.orderId) AND status='PICKED_UP';" $database | Out-Null
+    $due = Invoke-Json POST "$storeBase/api/maintenance/miniapp/deletion-requests/$($deletion.id)/clear-due" $null $storeHeaders
+    Assert-Equal 'COMPLETED' $due.status 'Due order cleanup completed'
+    Assert-Equal 1 $due.formalOrders 'Exactly one due order cleared'
+    $privacyAudit = Invoke-MySql "SELECT CONCAT(o.customer_id IS NULL,'|',o.customer_phone IS NULL,'|',o.customer_name IS NULL,'|',o.total_paid,'|',r.phone IS NULL,'|',r.openid IS NULL,'|',(SELECT COUNT(*) FROM miniapp_deletion_cleanup_audit WHERE request_id=r.id)) FROM laundry_order o JOIN miniapp_deletion_request r ON r.id=$($deletion.id) WHERE o.id=$($received.orderId);" $database
+    Assert-Equal "1|1|1|$expectedPaid|1|1|1" ($privacyAudit | Select-Object -First 1) 'Privacy cleanup kept accounting and removed direct identifiers'
+    Write-Host "PRIVACY_OK request=$($deletion.id) dueOrders=1 paid=$total"
 }
 finally {
     foreach ($process in $processes) {
         if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
     }
-    if (-not $KeepDatabase) { Invoke-MySql "DROP DATABASE IF EXISTS $database;" }
-    Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue
+    if ($databaseCreated -and -not $KeepDatabase) { Invoke-MySql "DROP DATABASE $database;" }
+    [Environment]::SetEnvironmentVariable('MYSQL_PWD', $previousMySqlPwd, 'Process')
     Write-Host "Logs: $logDir"
 }

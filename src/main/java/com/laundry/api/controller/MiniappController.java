@@ -43,6 +43,21 @@ public class MiniappController {
         return Result.success(service.profile(user.openid()));
     }
 
+    @PostMapping("/account/unbind-phone")
+    public Result<Map<String, Object>> unbindPhone(@AuthenticationPrincipal MiniappPrincipal user) {
+        return Result.success(service.unbindPhone(user.openid()));
+    }
+
+    @PostMapping("/account/deletion-request")
+    public Result<Map<String, Object>> requestDeletion(@AuthenticationPrincipal MiniappPrincipal user) {
+        return Result.success(service.requestDeletion(user.openid()));
+    }
+
+    @DeleteMapping("/account")
+    public Result<Map<String, Object>> closeAccount(@AuthenticationPrincipal MiniappPrincipal user) {
+        return Result.success(service.closeAccount(user.openid()));
+    }
+
     @GetMapping("/member-card")
     public Result<Map<String, Object>> memberCard(@AuthenticationPrincipal MiniappPrincipal user) {
         return Result.success(pickupOrders.memberCard(user.phone()));

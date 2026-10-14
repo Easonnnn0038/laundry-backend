@@ -22,6 +22,8 @@ public class PickupCodeService {
         List<Map<String, Object>> references = jdbc.queryForList(
                 "SELECT customer_id FROM laundry_order WHERE id=?", orderId);
         if (references.isEmpty()) throw new IllegalArgumentException("订单不存在");
+        if (references.get(0).get("customer_id") == null)
+            throw new IllegalArgumentException("订单联系方式已按删除申请清理，不能重新生成取衣码");
         long customerId = ((Number) references.get(0).get("customer_id")).longValue();
         // 先锁客户行，串行化同一客户并发回店的取衣码分配。
         List<Long> customer = jdbc.query("SELECT id FROM customer WHERE id=? FOR UPDATE",

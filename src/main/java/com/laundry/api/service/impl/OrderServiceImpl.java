@@ -120,6 +120,8 @@ public class OrderServiceImpl implements OrderService {
                 throw new IllegalArgumentException(storeReturn ? "仅已回店且未取走的订单可以店返" : "仅已取衣订单可以客返");
             if (request.getRewashReason() == null || request.getRewashReason().isBlank())
                 throw new IllegalArgumentException("请填写返洗原因");
+            if (sourceOrder.getCustomerPhone() == null)
+                throw new IllegalArgumentException("来源订单联系方式已按删除申请清理，不能直接发起返洗");
             if (!sourceOrder.getCustomerPhone().equals(request.getCustomerPhone().trim()))
                 throw new IllegalArgumentException("返洗客户与来源订单不一致");
             Set<Long> selectedIds = new HashSet<>();
@@ -145,7 +147,7 @@ public class OrderServiceImpl implements OrderService {
             request.setTotalPaid(BigDecimal.ZERO);
         }
 
-        log.info("开始收衣, 客户={}, 件数={}, 操作员={}", request.getCustomerPhone(),
+        log.info("开始收衣, 件数={}, 操作员={}",
                 request.getItems().size(), operatorName);
 
         if (request.getPaymentMethod() == null || !java.util.Set.of("CASH", "WECHAT", "ALIPAY", "MEMBER_CARD", "MIXED")
@@ -648,7 +650,7 @@ public class OrderServiceImpl implements OrderService {
         writeSmsLog(customer.getPhone(),
                 rewash
                         ? String.format("【小木棒洗衣】您的%d件返洗衣物已登记，返洗订单号%s", totalCount, orderNo)
-                        : String.format("【小木棒洗衣】尊敬的%s您送洗的%d件衣物已收衣，订单号%s，门店：金方世纪城民磬路108号",
+                        : String.format("【小木棒洗衣】尊敬的%s您送洗的%d件衣物已收衣，订单号%s，门店：安徽省宿州市埇桥区三八街道金方世纪城34幢120号",
                                 customer.getName(), totalCount, orderNo),
                 "RECEIVE", order.getId(), orderNo);
 
@@ -666,7 +668,8 @@ public class OrderServiceImpl implements OrderService {
             resp.setStoreAddress(store.getAddress());
         } else {
             resp.setStoreName("小木棒洗衣");
-            resp.setStoreAddress("金方世纪城民磬路108号");
+            resp.setStorePhone("18430880874");
+            resp.setStoreAddress("安徽省宿州市埇桥区三八街道金方世纪城34幢120号");
         }
 
         resp.setCustomerName(customer.getName());
@@ -753,7 +756,7 @@ public class OrderServiceImpl implements OrderService {
             c.setCreateTime(now);
             c.setUpdateTime(now);
             customerMapper.insert(c);
-            log.info("收衣新增客户 id={}, name={}", c.getId(), c.getName());
+            log.info("收衣新增客户 id={}", c.getId());
         } else {
             c = customerMapper.selectForUpdate(c.getId());
             // 更新为最新信息

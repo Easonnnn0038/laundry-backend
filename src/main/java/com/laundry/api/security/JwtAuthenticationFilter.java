@@ -19,6 +19,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Collections;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import com.laundry.api.mapper.MiniappUserMapper;
+import com.laundry.api.entity.MiniappUser;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import java.util.Objects;
 
 /**
  * JWT 认证过滤器
@@ -38,6 +42,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
     private UserDetailsService userDetailsService;
+    @Autowired private MiniappUserMapper miniappUsers;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -52,6 +57,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String role = jwtUtil.getRoleFromToken(token);
                 if ("MINIAPP".equals(role)) {
                     String phone = jwtUtil.parseToken(token).get("phone", String.class);
+                    Number authVersion = jwtUtil.parseToken(token).get("authVersion", Number.class);
+                    MiniappUser current = miniappUsers.selectOne(new LambdaQueryWrapper<MiniappUser>()
+                            .eq(MiniappUser::getOpenid, username));
+                    if (current == null || authVersion == null
+                            || !Objects.equals(authVersion.intValue(), current.getTokenVersion())
+                            || !Objects.equals(phone, current.getPhone())) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
                     MiniappPrincipal principal = new MiniappPrincipal(username, phone);
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             principal, null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_MINIAPP")));
@@ -68,7 +82,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 SecurityContextHolder.getContext().setAuthentication(authToken);
             } catch (Exception e) {
-                log.error("无法设置用户认证: {}", e.getMessage());
+                log.warn("无法设置用户认证");
                 SecurityContextHolder.clearContext();
             }
         }

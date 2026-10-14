@@ -2,9 +2,12 @@ package com.laundry.api.controller;
 
 import com.laundry.api.common.Result;
 import com.laundry.api.service.MaintenanceLogService;
+import com.laundry.api.service.MiniappService;
+import com.laundry.api.service.PersonalDataCleanupService;
 import com.laundry.api.utils.CurrentUserUtil;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -29,14 +32,15 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/maintenance")
 public class MaintenanceController {
-    private final JdbcTemplate jdbc; private final CurrentUserUtil user; private final MaintenanceLogService logs;
-    public MaintenanceController(JdbcTemplate jdbc,CurrentUserUtil user,MaintenanceLogService logs){this.jdbc=jdbc;this.user=user;this.logs=logs;}
+    private final JdbcTemplate jdbc; private final CurrentUserUtil user; private final MaintenanceLogService logs; private final MiniappService miniapp; private final PersonalDataCleanupService cleanup;
+    public MaintenanceController(JdbcTemplate jdbc,CurrentUserUtil user,MaintenanceLogService logs,MiniappService miniapp,PersonalDataCleanupService cleanup){this.jdbc=jdbc;this.user=user;this.logs=logs;this.miniapp=miniapp;this.cleanup=cleanup;}
     @Value("${maintenance.factory-host:127.0.0.1}") private String factoryHost;
     @Value("${maintenance.factory-port:8081}") private int factoryPort;
     @Value("${spring.rabbitmq.host:127.0.0.1}") private String rabbitHost;
     @Value("${spring.rabbitmq.port:5672}") private int rabbitPort;
     public record ResolveRequest(@NotBlank String status,String note){}
     public record ClientErrorRequest(String module,@NotBlank String message,String path,String clientVersion){}
+    public record DeletionReviewRequest(boolean identityVerified,@NotBlank @Size(max=500) String note){}
 
     @GetMapping("/status") public Result<Map<String,Object>> status(){admin();
         Map<String,Object> result=new LinkedHashMap<>();result.put("backend",check("门店后端",true,"1.0.0"));
@@ -66,6 +70,46 @@ public class MaintenanceController {
           WHERE o.store_code=? AND l.operate_time>=? AND l.operate_time<? AND (?='' OR l.order_no=? OR l.operator_name LIKE CONCAT('%',?,'%'))
           ORDER BY l.operate_time DESC LIMIT 500
           """,user.getStoreCode(),start.atStartOfDay(),end.plusDays(1).atStartOfDay(),term,term,term));}
+
+    @GetMapping("/miniapp/deletion-requests") public Result<List<Map<String,Object>>> miniappDeletionRequests(){admin();
+        return Result.success(jdbc.queryForList("""
+          SELECT id,phone,status,request_time AS requestTime,reviewed_by AS reviewedBy,
+            review_note AS reviewNote,reviewed_time AS reviewedTime,
+            (SELECT DATE_ADD(MIN(CASE WHEN o.status='PICKED_UP' THEN o.pickup_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
+             FROM laundry_order o WHERE o.customer_phone=r.phone AND o.status IN ('PICKED_UP','CANCELLED')) AS formalReviewAt,
+            (SELECT DATE_ADD(MIN(CASE WHEN p.status='CANCELLED' THEN p.update_time
+               WHEN o.status='PICKED_UP' THEN o.pickup_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
+             FROM pickup_order p LEFT JOIN laundry_order o ON o.id=p.formal_order_id
+             WHERE p.customer_phone=r.phone AND p.status IN ('CANCELLED','CONVERTED')) AS pickupReviewAt
+          FROM miniapp_deletion_request r ORDER BY status='PENDING' DESC,request_time ASC LIMIT 200
+          """));}
+
+    @PostMapping("/miniapp/deletion-requests/{id}/account-closure") @Transactional
+    public Result<Map<String,Object>> closeMiniappAccount(@PathVariable long id,@Valid @RequestBody DeletionReviewRequest req){admin();
+        if(!req.identityVerified())throw new IllegalArgumentException("须先核验申请人身份");
+        if(req.note().matches("(?s).*1[3-9]\\d{9}.*"))throw new IllegalArgumentException("处理说明请勿填写完整手机号");
+        List<String> applicants=jdbc.query("SELECT openid FROM miniapp_deletion_request WHERE id=?",(rs,n)->rs.getString(1),id);
+        if(applicants.isEmpty())throw new IllegalArgumentException("删除申请不存在");
+        String openid=applicants.get(0);
+        // 与客户自行注销保持同一锁顺序：先用户行，后申请行。
+        List<Map<String,Object>> accounts=jdbc.queryForList("SELECT id FROM miniapp_user WHERE openid=? FOR UPDATE",openid);
+        List<Map<String,Object>> rows=jdbc.queryForList("SELECT openid,status FROM miniapp_deletion_request WHERE id=? FOR UPDATE",id);
+        if(rows.isEmpty())throw new IllegalArgumentException("删除申请不存在");
+        Map<String,Object> row=rows.get(0);
+        if(!"PENDING".equals(row.get("status")))throw new IllegalArgumentException("该申请已处理，请刷新列表");
+        if(!accounts.isEmpty()){
+            Map<String,Object> outcome=miniapp.closeAccount(openid);
+            if("PENDING_SERVICE".equals(outcome.get("status")))return Result.success(outcome);
+        }
+        int changed=jdbc.update("""
+          UPDATE miniapp_deletion_request SET status='ACCOUNT_CLOSED',reviewed_by=?,review_note=?,reviewed_time=NOW()
+          WHERE id=? AND status='PENDING'
+          """,user.getOperatorName(),req.note().trim(),id);
+        if(changed!=1)throw new IllegalArgumentException("申请状态已变化，请刷新后重试");
+        return Result.success(Map.of("status","ACCOUNT_CLOSED","message","账户与常用地址已按规则处理；订单及财务资料仍按保留期限复核"));}
+
+    @PostMapping("/miniapp/deletion-requests/{id}/clear-due")
+    public Result<Map<String,Object>> clearDuePersonalData(@PathVariable long id){admin();return Result.success(cleanup.clearDue(id,user.getOperatorName()));}
 
     @GetMapping("/events/export") public ResponseEntity<byte[]> export(@RequestParam(required=false) String category,@RequestParam(required=false) String status,
         @RequestParam(required=false) LocalDate from,@RequestParam(required=false) LocalDate to){admin();validateDates(from,to);List<Map<String,Object>> rows=findEvents(category,status,from,to);
