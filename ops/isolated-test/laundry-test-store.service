@@ -1,0 +1,17 @@
+[Unit]
+Description=Laundry isolated miniapp test store backend
+After=network.target mysql.service docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/laundry/isolated
+EnvironmentFile=/etc/laundry/isolated.env
+ExecStart=/usr/bin/java -Xms64m -Xmx512m -jar /opt/laundry/isolated/laundry-backend.jar --spring.profiles.active=isolated-miniapp --server.address=127.0.0.1 --server.port=18080
+Restart=on-failure
+RestartSec=5
+MemoryMax=750M
+
+[Install]
+WantedBy=multi-user.target

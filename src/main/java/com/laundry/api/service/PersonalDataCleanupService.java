@@ -28,7 +28,7 @@ public class PersonalDataCleanupService {
         // Serialise with store order creation, which locks an existing customer row.
         List<Long> customers = jdbc.query("SELECT id FROM customer WHERE phone=? FOR UPDATE",
                 (rs, n) -> rs.getLong(1), phone);
-        int activeOrders = count("SELECT COUNT(*) FROM laundry_order WHERE customer_phone=? AND status NOT IN ('PICKED_UP','CANCELLED')", phone);
+        int activeOrders = count("SELECT COUNT(*) FROM laundry_order WHERE customer_phone=? AND status NOT IN ('PICKED_UP','DELIVERED','CANCELLED')", phone);
         int activePickups = count("SELECT COUNT(*) FROM pickup_order WHERE customer_phone=? AND status NOT IN ('CONVERTED','CANCELLED')", phone);
         int debts = count("SELECT COUNT(*) FROM laundry_order WHERE customer_phone=? AND debt_amount>0", phone);
         Integer balanceCount = jdbc.queryForObject("""
@@ -44,13 +44,19 @@ public class PersonalDataCleanupService {
 
         int formal = jdbc.update("""
                 UPDATE laundry_order SET customer_id=NULL,customer_name=NULL,customer_phone=NULL,
-                  customer_address=NULL,remark=NULL,personal_data_cleared_at=NOW()
+                  customer_address=NULL,delivery_contact_name=NULL,delivery_phone=NULL,
+                  delivery_province=NULL,delivery_city=NULL,delivery_district=NULL,delivery_address=NULL,
+                  remark=NULL,personal_data_cleared_at=NOW()
                 WHERE customer_phone=? AND ((status='PICKED_UP' AND pickup_time IS NOT NULL AND DATE_ADD(pickup_time,INTERVAL 6 MONTH)<=NOW())
+                  OR (status='DELIVERED' AND delivered_time IS NOT NULL AND DATE_ADD(delivered_time,INTERVAL 6 MONTH)<=NOW())
                   OR (status='CANCELLED' AND cancel_time IS NOT NULL AND DATE_ADD(cancel_time,INTERVAL 6 MONTH)<=NOW()))
                 """, phone);
         int pickup = jdbc.update("""
                 UPDATE pickup_order p LEFT JOIN laundry_order o ON o.id=p.formal_order_id
-                SET p.customer_phone=NULL,p.contact_name=NULL,p.pickup_address=NULL,p.remark=NULL,p.personal_data_cleared_at=NOW()
+                SET p.customer_phone=NULL,p.contact_name=NULL,p.pickup_address=NULL,
+                    p.delivery_contact_name=NULL,p.delivery_phone=NULL,p.delivery_province=NULL,
+                    p.delivery_city=NULL,p.delivery_district=NULL,p.delivery_address=NULL,
+                    p.remark=NULL,p.personal_data_cleared_at=NOW()
                 WHERE p.customer_phone=? AND ((p.status='CANCELLED' AND DATE_ADD(p.update_time,INTERVAL 6 MONTH)<=NOW())
                   OR (p.status='CONVERTED' AND o.personal_data_cleared_at IS NOT NULL))
                 """, phone);

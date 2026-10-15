@@ -89,9 +89,13 @@ public class OrderServiceImpl implements OrderService {
         var previous = idempotencyService.begin(idempotencyScope, request.getRequestId(), ReceiveOrderResponse.class);
         if (previous.isPresent()) return previous.get();
 
+        Map<String, Object> deliveryPickup = null;
+        BigDecimal deliveryFee = BigDecimal.ZERO;
         if (request.getPickupOrderId() != null) {
             List<Map<String, Object>> pickupRows = jdbc.queryForList("""
-                    SELECT id,customer_phone,store_code,status,formal_order_id
+                    SELECT id,customer_phone,store_code,status,formal_order_id,
+                           delivery_contact_name,delivery_phone,delivery_province,delivery_city,
+                           delivery_district,delivery_address
                     FROM pickup_order WHERE id=? FOR UPDATE
                     """, request.getPickupOrderId());
             if (pickupRows.isEmpty()) throw new IllegalArgumentException("上门预约单不存在");
@@ -101,6 +105,24 @@ public class OrderServiceImpl implements OrderService {
                 throw new IllegalArgumentException("该上门预约单已导入或尚未取回");
             if (!request.getCustomerPhone().trim().equals(pickup.get("customer_phone")))
                 throw new IllegalArgumentException("收衣手机号与上门预约单不一致");
+            List<String> deliveryFields = List.of("delivery_contact_name", "delivery_phone", "delivery_province",
+                    "delivery_city", "delivery_district", "delivery_address");
+            long presentFields = deliveryFields.stream().filter(field -> pickup.get(field) != null
+                    && !String.valueOf(pickup.get(field)).isBlank()).count();
+            if (presentFields != 0 && presentFields != deliveryFields.size())
+                throw new IllegalArgumentException("请先让顾客在小程序确认完整的寄回地址");
+            // V25 前预约未采集寄回地址，仍按原有门店取衣流程导入。
+            if (presentFields == deliveryFields.size()) {
+                deliveryPickup = pickup;
+                // 小程序订单验衣后出一笔最终账单，门店不得把未发生的微信收款记为实收。
+                if (Integer.valueOf(1).equals(request.getNewCardFlag()) || Integer.valueOf(1).equals(request.getRechargeFlag()))
+                    throw new IllegalArgumentException("寄回订单暂不支持收衣时办卡或充值");
+                request.setPaymentMethod("WECHAT");
+                request.setExtraMethod(null);
+                request.setTotalPaid(BigDecimal.ZERO);
+                request.setNewCardFlag(0);
+                request.setRechargeFlag(0);
+            }
         }
 
         boolean rewash = request.getSourceOrderId() != null;
@@ -366,6 +388,7 @@ public class OrderServiceImpl implements OrderService {
         } else {
             totalReceivable = payableAmount.add(cardInflow);
         }
+        totalReceivable = totalReceivable.add(deliveryFee);
         BigDecimal totalPaid = (request.getTotalPaid() != null ? request.getTotalPaid() : totalReceivable)
                 .setScale(2, RoundingMode.HALF_UP);
         if (totalPaid.compareTo(BigDecimal.ZERO) < 0 || totalPaid.compareTo(totalReceivable) > 0) {
@@ -380,6 +403,17 @@ public class OrderServiceImpl implements OrderService {
         order.setRequestId(request.getRequestId());
         order.setOrderType(rewash ? rewashType : "NORMAL");
         order.setOrderSource(request.getPickupOrderId() == null ? "STORE" : "MINIAPP");
+        order.setFulfillmentMethod(deliveryPickup == null ? "STORE_PICKUP" : "HOME_DELIVERY");
+        if (deliveryPickup != null) {
+            order.setDeliveryContactName(String.valueOf(deliveryPickup.get("delivery_contact_name")));
+            order.setDeliveryPhone(String.valueOf(deliveryPickup.get("delivery_phone")));
+            order.setDeliveryProvince(String.valueOf(deliveryPickup.get("delivery_province")));
+            order.setDeliveryCity(String.valueOf(deliveryPickup.get("delivery_city")));
+            order.setDeliveryDistrict(String.valueOf(deliveryPickup.get("delivery_district")));
+            order.setDeliveryAddress(String.valueOf(deliveryPickup.get("delivery_address")));
+            order.setDeliveryBillingStatus("AWAITING_FEE");
+        } else order.setDeliveryBillingStatus(null);
+        order.setDeliveryFee(deliveryFee);
         if (rewash) {
             order.setSourceOrderId(sourceOrder.getId());
             order.setSourceOrderNo(sourceOrder.getOrderNo());

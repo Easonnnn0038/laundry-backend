@@ -51,7 +51,13 @@ public class PickupOrderService {
             @NotEmpty @Size(max = 50) List<@Valid ItemRequest> items,
             String dealCode,
             String dealPlatform,
-            String voucherCode) {}
+            String voucherCode,
+            @NotBlank @Size(max = 50) String deliveryContactName,
+            @NotBlank @Pattern(regexp = "^1\\d{10}$") String deliveryPhone,
+            @NotBlank @Size(max = 30) String deliveryProvince,
+            @NotBlank @Size(max = 30) String deliveryCity,
+            @NotBlank @Size(max = 30) String deliveryDistrict,
+            @NotBlank @Size(max = 255) String deliveryAddress) {}
     private record MemberPricing(Long cardId, String cardTypeName, BigDecimal discountRate) {}
 
     public List<Map<String, Object>> catalog(String phone) {
@@ -197,15 +203,18 @@ public class PickupOrderService {
                 INSERT INTO pickup_order(request_id,pickup_no,openid,customer_phone,contact_name,store_code,pickup_address,
                   appointment_date,appointment_slot,remark,status,original_amount,discount_amount,member_card_id,
                   member_card_type,discount_rate,estimated_amount,paid_amount,deal_package_id,deal_code,deal_name,
-                  deal_price,deal_platform,deal_voucher_code,deal_rule_snapshot)
-                VALUES(?,?,?,?,?,?,?,?,?,?,'SUBMITTED',?,?,?,?,?,?,0,?,?,?,?,?,?,?)
+                  deal_price,deal_platform,deal_voucher_code,deal_rule_snapshot,
+                  delivery_contact_name,delivery_phone,delivery_province,delivery_city,delivery_district,delivery_address)
+                VALUES(?,?,?,?,?,?,?,?,?,?,'SUBMITTED',?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, request.requestId(), pickupNo, user.openid(), user.phone(), request.contactName().trim(), storeCode,
                 request.pickupAddress().trim(), request.appointmentDate(), request.appointmentSlot(),
                 blankToNull(request.remark()), originalTotal, originalTotal.subtract(total), member == null ? null : member.cardId(),
                 member == null ? null : member.cardTypeName(), member == null ? null : member.discountRate(), total,
                 deal == null ? null : deal.id(), deal == null ? null : deal.code(), deal == null ? null : deal.name(),
                 deal == null ? null : deal.price(), deal == null ? null : deal.platform(),
-                deal == null ? null : deal.voucherCode(), deal == null ? null : deal.ruleSnapshot());
+                deal == null ? null : deal.voucherCode(), deal == null ? null : deal.ruleSnapshot(),
+                request.deliveryContactName().trim(), request.deliveryPhone().trim(), request.deliveryProvince().trim(),
+                request.deliveryCity().trim(), request.deliveryDistrict().trim(), request.deliveryAddress().trim());
         } catch (DuplicateKeyException e) {
             List<Long> duplicate = jdbc.query("SELECT id FROM pickup_order WHERE openid=? AND request_id=? FOR UPDATE",
                     (rs, row) -> rs.getLong(1), user.openid(), request.requestId());

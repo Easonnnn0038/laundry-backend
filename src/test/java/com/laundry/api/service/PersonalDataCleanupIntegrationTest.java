@@ -38,6 +38,8 @@ class PersonalDataCleanupIntegrationTest {
             jdbc.execute("CREATE TABLE deal_voucher(id BIGINT PRIMARY KEY,pickup_order_id BIGINT,customer_phone VARCHAR(20) NOT NULL)");
             jdbc.execute("CREATE TABLE miniapp_address(id BIGINT PRIMARY KEY,customer_phone VARCHAR(20))");
             new ResourceDatabasePopulator(new ClassPathResource("db/migration/V24__deletion_request_cleanup.sql")).execute(source);
+            jdbc.execute("ALTER TABLE laundry_order ADD COLUMN delivered_time DATETIME, ADD COLUMN delivery_contact_name VARCHAR(50), ADD COLUMN delivery_phone VARCHAR(20), ADD COLUMN delivery_province VARCHAR(30), ADD COLUMN delivery_city VARCHAR(30), ADD COLUMN delivery_district VARCHAR(30), ADD COLUMN delivery_address VARCHAR(255)");
+            jdbc.execute("ALTER TABLE pickup_order ADD COLUMN delivery_contact_name VARCHAR(50), ADD COLUMN delivery_phone VARCHAR(20), ADD COLUMN delivery_province VARCHAR(30), ADD COLUMN delivery_city VARCHAR(30), ADD COLUMN delivery_district VARCHAR(30), ADD COLUMN delivery_address VARCHAR(255)");
             jdbc.execute("INSERT INTO miniapp_deletion_request VALUES(7,'openid-1','13800000000','ACCOUNT_CLOSED',NULL)");
             jdbc.execute("INSERT INTO customer VALUES(11,'顾客','13800000000','上门地址',NULL)");
             jdbc.execute("INSERT INTO member_card VALUES(21,11,'顾客','13800000000',0)");

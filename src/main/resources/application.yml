@@ -128,6 +128,12 @@ app:
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
+    pay:
+      merchant-id: ${WECHAT_PAY_MERCHANT_ID:}
+      merchant-serial: ${WECHAT_PAY_MERCHANT_SERIAL:}
+      private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:}
+      api-v3-key: ${WECHAT_PAY_API_V3_KEY:}
+      notify-url: ${WECHAT_PAY_NOTIFY_URL:}
     test-login-enabled: ${MINIAPP_TEST_LOGIN_ENABLED:false}
     test-login-key: ${MINIAPP_TEST_LOGIN_KEY:}
     test-phone: ${MINIAPP_TEST_PHONE:}

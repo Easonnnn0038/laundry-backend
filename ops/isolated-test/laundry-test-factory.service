@@ -1,0 +1,17 @@
+[Unit]
+Description=Laundry isolated miniapp test factory backend
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/laundry/isolated
+EnvironmentFile=/etc/laundry/isolated.env
+ExecStart=/usr/bin/java -Xms64m -Xmx384m -jar /opt/laundry/isolated/laundry-factory.jar --spring.profiles.active=isolated-miniapp --server.address=127.0.0.1 --server.port=18081
+Restart=on-failure
+RestartSec=5
+MemoryMax=550M
+
+[Install]
+WantedBy=multi-user.target

@@ -26,6 +26,18 @@ public class LaundryOrder {
     /** STORE门店下单 / MINIAPP小程序下单 */
     private String orderSource;
 
+    /** STORE_PICKUP / HOME_DELIVERY；历史订单始终保持原交付方式。 */
+    private String fulfillmentMethod;
+    private String deliveryContactName;
+    private String deliveryPhone;
+    private String deliveryProvince;
+    private String deliveryCity;
+    private String deliveryDistrict;
+    private String deliveryAddress;
+    private BigDecimal deliveryFee;
+    private String deliveryBillingStatus;
+    private LocalDateTime deliveredTime;
+
     /** 返洗来源订单 */
     private Long sourceOrderId;
     private String sourceOrderNo;

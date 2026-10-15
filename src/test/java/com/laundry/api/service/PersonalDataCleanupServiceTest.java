@@ -34,6 +34,7 @@ class PersonalDataCleanupServiceTest {
         PersonalDataCleanupService service = new PersonalDataCleanupService(jdbc);
         assertEquals("COMPLETED", service.clearDue(7L, "管理员").get("status"));
         verify(jdbc).update(argThat(sql -> sql.contains("DATE_ADD(pickup_time,INTERVAL 6 MONTH)")
+                && sql.contains("DATE_ADD(delivered_time,INTERVAL 6 MONTH)")
                 && sql.contains("DATE_ADD(cancel_time,INTERVAL 6 MONTH)")), eq("13800000000"));
         verify(jdbc).update(contains("status='COMPLETED'"), eq(7L));
     }

@@ -164,6 +164,7 @@ public class GlobalExceptionHandler {
     private boolean isMiniapp(HttpServletRequest request) {
         return request != null && request.getRequestURI() != null
                 && (request.getRequestURI().startsWith("/api/miniapp/")
+                    || request.getRequestURI().startsWith("/api/payments/wechat/")
                     || request.getRequestURI().startsWith("/api/maintenance/miniapp/"));
     }
 }

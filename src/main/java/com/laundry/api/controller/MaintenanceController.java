@@ -75,10 +75,12 @@ public class MaintenanceController {
         return Result.success(jdbc.queryForList("""
           SELECT id,phone,status,request_time AS requestTime,reviewed_by AS reviewedBy,
             review_note AS reviewNote,reviewed_time AS reviewedTime,
-            (SELECT DATE_ADD(MIN(CASE WHEN o.status='PICKED_UP' THEN o.pickup_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
-             FROM laundry_order o WHERE o.customer_phone=r.phone AND o.status IN ('PICKED_UP','CANCELLED')) AS formalReviewAt,
+            (SELECT DATE_ADD(MIN(CASE WHEN o.status='PICKED_UP' THEN o.pickup_time
+                WHEN o.status='DELIVERED' THEN o.delivered_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
+             FROM laundry_order o WHERE o.customer_phone=r.phone AND o.status IN ('PICKED_UP','DELIVERED','CANCELLED')) AS formalReviewAt,
             (SELECT DATE_ADD(MIN(CASE WHEN p.status='CANCELLED' THEN p.update_time
-               WHEN o.status='PICKED_UP' THEN o.pickup_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
+               WHEN o.status='PICKED_UP' THEN o.pickup_time
+               WHEN o.status='DELIVERED' THEN o.delivered_time ELSE o.cancel_time END),INTERVAL 6 MONTH)
              FROM pickup_order p LEFT JOIN laundry_order o ON o.id=p.formal_order_id
              WHERE p.customer_phone=r.phone AND p.status IN ('CANCELLED','CONVERTED')) AS pickupReviewAt
           FROM miniapp_deletion_request r ORDER BY status='PENDING' DESC,request_time ASC LIMIT 200

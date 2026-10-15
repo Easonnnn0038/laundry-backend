@@ -16,10 +16,13 @@ import java.util.Map;
 public class MiniappController {
     private final MiniappService service;
     private final PickupOrderService pickupOrders;
+    private final com.laundry.api.service.HomeDeliveryWechatPayService homeDeliveryPay;
     private final com.laundry.api.service.DealPackageService deals;
     public MiniappController(MiniappService service, PickupOrderService pickupOrders,
-                             com.laundry.api.service.DealPackageService deals) {
+                             com.laundry.api.service.DealPackageService deals,
+                             com.laundry.api.service.HomeDeliveryWechatPayService homeDeliveryPay) {
         this.service = service; this.pickupOrders = pickupOrders; this.deals = deals;
+        this.homeDeliveryPay = homeDeliveryPay;
     }
 
     @PostMapping("/auth/login")
@@ -72,6 +75,22 @@ public class MiniappController {
     @GetMapping("/orders/{id}")
     public Result<Map<String, Object>> order(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable Long id) {
         return Result.success(service.order(user.phone(), id));
+    }
+
+    @PostMapping("/orders/{id}/test-deliver")
+    public Result<Map<String, Object>> testDeliver(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable Long id,
+            @RequestHeader(value = "X-Miniapp-Test-Key", required = false) String key) {
+        return Result.success(service.testDeliver(user.phone(), id, key));
+    }
+
+    @PostMapping("/orders/{id}/pay")
+    public Result<Map<String, Object>> pay(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable long id) {
+        return Result.success(homeDeliveryPay.checkout(id, user));
+    }
+
+    @GetMapping("/orders/{id}/payment-status")
+    public Result<Map<String, Object>> paymentStatus(@AuthenticationPrincipal MiniappPrincipal user, @PathVariable long id) {
+        return Result.success(homeDeliveryPay.refresh(id, user));
     }
 
     @GetMapping("/pickup-catalog")
