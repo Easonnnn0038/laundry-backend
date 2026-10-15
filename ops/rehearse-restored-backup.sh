@@ -45,7 +45,7 @@ gzip -cd "$backup" | mysql "$database"
 
 before=$(mysql --batch --skip-column-names "$database" -e "SELECT CONCAT((SELECT COUNT(*) FROM laundry_order),'|',(SELECT COUNT(*) FROM order_item),'|',(SELECT COUNT(*) FROM customer),'|',(SELECT COUNT(*) FROM pickup_order),'|',(SELECT COUNT(*) FROM member_card),'|',(SELECT COALESCE(SUM(total_paid),0) FROM laundry_order),'|',(SELECT COALESCE(SUM(balance),0) FROM member_card));")
 version=$(mysql --batch --skip-column-names "$database" -e "SELECT MAX(CAST(version AS UNSIGNED)) FROM flyway_schema_history WHERE success=1;")
-case "$version" in 19|20|21|22|23|24|25) ;; *) echo "Unexpected backup migration version: $version" >&2; exit 1 ;; esac
+case "$version" in 19|20|21|22|23|24|25|26) ;; *) echo "Unexpected backup migration version: $version" >&2; exit 1 ;; esac
 
 # The account has privileges only on this random database, so even a bad URL cannot migrate production.
 set -a
@@ -64,13 +64,13 @@ java_pid=$!
 
 ready=0
 for _ in {1..90}; do
-  migrated=$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version='26' AND success=1;" 2>/dev/null || true)
+  migrated=$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version='27' AND success=1;" 2>/dev/null || true)
   if [[ "$migrated" == 1 ]]; then ready=1; break; fi
   if ! kill -0 "$java_pid" 2>/dev/null; then break; fi
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then
-  echo 'Migration did not reach V26' >&2
+  echo 'Migration did not reach V27' >&2
   exit 1
 fi
 kill "$java_pid" 2>/dev/null || true
@@ -79,6 +79,6 @@ java_pid=''
 
 after=$(mysql --batch --skip-column-names "$database" -e "SELECT CONCAT((SELECT COUNT(*) FROM laundry_order),'|',(SELECT COUNT(*) FROM order_item),'|',(SELECT COUNT(*) FROM customer),'|',(SELECT COUNT(*) FROM pickup_order),'|',(SELECT COUNT(*) FROM member_card),'|',(SELECT COALESCE(SUM(total_paid),0) FROM laundry_order),'|',(SELECT COALESCE(SUM(balance),0) FROM member_card));")
 test "$before" = "$after" || { echo 'Order/customer/member counts or money changed' >&2; exit 1; }
-test "$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version IN ('23','24','25','26') AND success=1;")" = 4
-test "$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$database' AND TABLE_NAME IN ('miniapp_deletion_request','miniapp_deletion_cleanup_audit','delivery_fee_rule','home_delivery_payment');")" = 4
-echo "RESTORED_MIGRATION_OK from_v=$version to_v=26 snapshot=$before"
+test "$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version IN ('23','24','25','26','27') AND success=1;")" = 5
+test "$(mysql --batch --skip-column-names "$database" -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$database' AND TABLE_NAME IN ('miniapp_deletion_request','miniapp_deletion_cleanup_audit','delivery_fee_rule','home_delivery_payment','customer_contact_log');")" = 5
+echo "RESTORED_MIGRATION_OK from_v=$version to_v=27 snapshot=$before"

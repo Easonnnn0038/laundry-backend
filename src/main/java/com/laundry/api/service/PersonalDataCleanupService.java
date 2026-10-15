@@ -78,6 +78,7 @@ public class PersonalDataCleanupService {
                 + count("SELECT COUNT(*) FROM pickup_order WHERE customer_phone=?", phone);
         if (remaining == 0) {
             for (Long customerId : customers) {
+                jdbc.update("UPDATE customer_contact_log SET note=NULL WHERE customer_id=?", customerId);
                 jdbc.update("UPDATE member_card SET customer_name=NULL,customer_phone=NULL WHERE customer_id=? AND balance=0", customerId);
                 jdbc.update("UPDATE customer SET name=NULL,phone=NULL,address=NULL,remark=NULL WHERE id=? AND phone=?", customerId, phone);
             }
