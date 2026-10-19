@@ -35,6 +35,11 @@ public class MiniappController {
         return Result.success(service.testLogin(key));
     }
 
+    @PostMapping("/auth/password-login")
+    public Result<Map<String, Object>> passwordLogin(@RequestBody Map<String, String> body) {
+        return Result.success(service.passwordLogin(body.get("phone"), body.get("password")));
+    }
+
     @PostMapping("/auth/bind-phone")
     public Result<Map<String, Object>> bindPhone(@AuthenticationPrincipal MiniappPrincipal user,
                                                   @RequestBody Map<String, String> body) {

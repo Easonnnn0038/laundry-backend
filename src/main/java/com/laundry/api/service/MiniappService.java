@@ -50,6 +50,8 @@ public class MiniappService {
     @Value("${app.wechat.test-login-enabled:false}") private boolean testLoginEnabled;
     @Value("${app.wechat.test-login-key:}") private String testLoginKey;
     @Value("${app.wechat.test-phone:}") private String testPhone;
+    @Value("${app.wechat.test-account-phone:}") private String testAccountPhone;
+    @Value("${app.wechat.test-account-password:}") private String testAccountPassword;
     private volatile String accessToken;
     private volatile long accessTokenExpiresAt;
 
@@ -101,6 +103,27 @@ public class MiniappService {
             user = new MiniappUser(); user.setOpenid(openid); user.setPhone(testPhone); user.setBindTime(LocalDateTime.now()); userMapper.insert(user);
         } else if (!testPhone.equals(user.getPhone())) {
             user.setPhone(testPhone); user.setBindTime(LocalDateTime.now()); userMapper.updateById(user);
+        }
+        return authResponse(user);
+    }
+
+    @Transactional
+    public Map<String, Object> passwordLogin(String phone, String password) {
+        if (!Arrays.asList(environment.getActiveProfiles()).contains("local-miniapp")
+                || Arrays.asList(environment.getActiveProfiles()).contains("prod")
+                || testAccountPhone == null || testAccountPassword == null
+                || !testAccountPhone.matches("1\\d{10}") || testAccountPassword.isBlank()
+                || phone == null || password == null
+                || !MessageDigest.isEqual(testAccountPhone.getBytes(StandardCharsets.UTF_8), phone.getBytes(StandardCharsets.UTF_8))
+                || !MessageDigest.isEqual(testAccountPassword.getBytes(StandardCharsets.UTF_8), password.getBytes(StandardCharsets.UTF_8))) {
+            throw new IllegalArgumentException("手机号或密码不正确");
+        }
+        String openid = "test-password-" + phone;
+        MiniappUser user = userMapper.selectOne(new LambdaQueryWrapper<MiniappUser>().eq(MiniappUser::getOpenid, openid));
+        if (user == null) {
+            user = new MiniappUser();
+            user.setOpenid(openid); user.setPhone(phone); user.setBindTime(LocalDateTime.now());
+            userMapper.insert(user);
         }
         return authResponse(user);
     }

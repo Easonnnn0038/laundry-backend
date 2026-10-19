@@ -5,4 +5,5 @@ target/
 uploads/
 backups/
 .env
+ops/local-miniapp-test-account.ps1
 .DS_Store

@@ -21,8 +21,12 @@ $previous = @{
     MINIAPP_TEST_LOGIN_ENABLED = $env:MINIAPP_TEST_LOGIN_ENABLED
     MINIAPP_TEST_LOGIN_KEY = $env:MINIAPP_TEST_LOGIN_KEY
     MINIAPP_TEST_PHONE = $env:MINIAPP_TEST_PHONE
+    MINIAPP_TEST_ACCOUNT_PHONE = $env:MINIAPP_TEST_ACCOUNT_PHONE
+    MINIAPP_TEST_ACCOUNT_PASSWORD = $env:MINIAPP_TEST_ACCOUNT_PASSWORD
 }
 try {
+    $accountConfig = Join-Path $PSScriptRoot 'local-miniapp-test-account.ps1'
+    if (Test-Path -LiteralPath $accountConfig) { . $accountConfig }
     if (-not $env:DB_PASSWORD) {
         $securePassword = Read-Host 'Enter local MySQL root password (hidden)' -AsSecureString
         $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)

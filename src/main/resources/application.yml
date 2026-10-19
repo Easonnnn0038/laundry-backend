@@ -137,3 +137,5 @@ app:
     test-login-enabled: ${MINIAPP_TEST_LOGIN_ENABLED:false}
     test-login-key: ${MINIAPP_TEST_LOGIN_KEY:}
     test-phone: ${MINIAPP_TEST_PHONE:}
+    test-account-phone: ${MINIAPP_TEST_ACCOUNT_PHONE:}
+    test-account-password: ${MINIAPP_TEST_ACCOUNT_PASSWORD:}

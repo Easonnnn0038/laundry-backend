@@ -24,6 +24,29 @@ import static org.mockito.Mockito.*;
 
 class MiniappServiceTest {
     @Test
+    void passwordLoginOnlyCreatesTheLocalTestAccountAfterMatchingCredentials() {
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[]{"local-miniapp"});
+        MiniappUserMapper users = mock(MiniappUserMapper.class);
+        JwtUtil jwt = mock(JwtUtil.class);
+        when(jwt.generateToken(anyString(), eq("MINIAPP"), anyMap())).thenReturn("local-token");
+        MiniappService service = new MiniappService(users, mock(LaundryOrderMapper.class),
+                mock(OrderItemMapper.class), mock(StoreMapper.class), jwt,
+                new ObjectMapper(), environment, mock(JdbcTemplate.class));
+        ReflectionTestUtils.setField(service, "testAccountPhone", "13900000000");
+        ReflectionTestUtils.setField(service, "testAccountPassword", "example-test-secret");
+
+        assertThrows(IllegalArgumentException.class, () -> service.passwordLogin("13900000000", "wrong"));
+        verifyNoInteractions(users);
+        assertEquals(true, service.passwordLogin("13900000000", "example-test-secret").get("bound"));
+        verify(users).insert(argThat(user -> "test-password-13900000000".equals(user.getOpenid())
+                && "13900000000".equals(user.getPhone())));
+
+        when(environment.getActiveProfiles()).thenReturn(new String[]{"prod", "local-miniapp"});
+        assertThrows(IllegalArgumentException.class, () -> service.passwordLogin("13900000000", "example-test-secret"));
+    }
+
+    @Test
     void localSimulationOnlyUpdatesPackedTestOrderWithoutChangingPayment() {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"local-miniapp"});

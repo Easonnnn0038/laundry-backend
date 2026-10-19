@@ -63,7 +63,7 @@ public class SecurityConfig {
             // 授权规则
             .authorizeHttpRequests(auth -> auth
                 // 登录接口 - 无需认证
-                .requestMatchers("/api/auth/login", "/api/miniapp/auth/login", "/api/miniapp/auth/test-login",
+                .requestMatchers("/api/auth/login", "/api/miniapp/auth/login", "/api/miniapp/auth/test-login", "/api/miniapp/auth/password-login",
                         "/api/payments/wechat/notify").permitAll()
                 // 登录接口的预检 OPTIONS - 无需认证（双保险）
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()

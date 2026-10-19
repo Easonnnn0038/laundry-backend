@@ -28,7 +28,7 @@ public class MiniappRateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI(), method = request.getMethod();
         String group; int limit;
-        if ("POST".equals(method) && (path.equals("/api/miniapp/auth/login") || path.equals("/api/miniapp/auth/test-login"))) {
+        if ("POST".equals(method) && (path.equals("/api/miniapp/auth/login") || path.equals("/api/miniapp/auth/test-login") || path.equals("/api/miniapp/auth/password-login"))) {
             group = "login"; limit = 20;
         } else if ("POST".equals(method) && path.equals("/api/miniapp/auth/bind-phone")) {
             group = "bind"; limit = 8;
